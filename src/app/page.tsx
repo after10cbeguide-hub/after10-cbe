@@ -252,63 +252,61 @@ export default function Home() {
   });
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-zinc-950 font-sans">
+    <main className="relative w-screen h-screen overflow-hidden bg-zinc-950 font-sans select-none">
       {/* Top Floating App Bar */}
-      <header className="absolute top-4 left-4 right-4 z-10 flex flex-col gap-2 pointer-events-none">
-        <div className="flex items-center justify-between bg-zinc-900/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-zinc-800 shadow-xl pointer-events-auto">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <h1 className="text-base font-black tracking-tight text-zinc-100">
+      <header className="absolute top-2 sm:top-4 left-2 sm:left-4 right-2 sm:right-4 z-20 flex flex-col gap-2 pointer-events-none">
+        {/* Main Header Bar */}
+        <div className="flex items-center justify-between bg-zinc-950/90 sm:bg-zinc-900/90 backdrop-blur-md px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl border border-zinc-800 shadow-2xl pointer-events-auto">
+          {/* Brand */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <h1 className="text-sm sm:text-base font-black tracking-tight text-zinc-100">
               AFTER 10 <span className="text-emerald-400">CBE</span>
             </h1>
           </div>
-          
-          <div className="flex items-center gap-2">
+
+          {/* Right Header Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Live Ghost Presence Indicator */}
-            <div className="flex items-center gap-1 text-[11px] font-mono bg-purple-950/70 text-purple-300 border border-purple-800/60 px-2 py-0.5 rounded-xl">
-              <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
-              <span>{ghosts.length} Ghosts Awake</span>
+            <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-mono bg-purple-950/70 text-purple-300 border border-purple-800/60 px-2 py-1 rounded-xl">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+              <span>{ghosts.length} <span className="hidden xs:inline">Awake</span></span>
             </div>
 
             {pendingSpots.length > 0 && (
               <button
                 onClick={() => setIsAdminQueueOpen(true)}
-                className="flex items-center gap-1 text-[11px] font-mono bg-amber-950/70 text-amber-300 border border-amber-700/60 px-2 py-0.5 rounded-xl animate-pulse"
+                className="flex items-center gap-1 text-[10px] sm:text-[11px] font-mono bg-amber-950/70 text-amber-300 border border-amber-700/60 px-2 py-1 rounded-xl animate-pulse"
                 title="Review pending submissions"
               >
-                <CheckCheck className="w-3.5 h-3.5" />
-                <span>{pendingSpots.length} Pending</span>
+                <CheckCheck className="w-3 h-3" />
+                <span>{pendingSpots.length}</span>
               </button>
             )}
 
             <button
               onClick={() => requireAuthForAction('Sign in with Google to suggest new spots', () => setIsAddSpotOpen(true))}
-              className="flex items-center gap-1 text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-xl transition active:scale-95"
+              className="flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 sm:px-2.5 py-1 rounded-xl transition active:scale-95 shrink-0"
             >
-              <Plus className="w-3.5 h-3.5" /> Suggest Spot
+              <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden sm:inline">Suggest Spot</span>
+              <span className="sm:hidden">Spot</span>
             </button>
 
             {/* Profile or Sign In */}
             {user ? (
-              <div className="flex items-center gap-1.5 bg-zinc-800/80 border border-zinc-700/60 pl-1.5 pr-2 py-1 rounded-xl">
+              <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-700/70 pl-1 pr-1.5 py-0.5 sm:py-1 rounded-xl shrink-0">
                 <img
                   src={user.avatarUrl}
                   alt={user.name}
-                  className="w-5 h-5 rounded-full bg-zinc-700"
+                  className="w-5 h-5 rounded-full object-cover bg-zinc-800 ring-1 ring-emerald-500/40"
                 />
-                <div className="flex flex-col text-left">
-                  <span className="text-[10px] font-bold text-zinc-200 leading-tight">
-                    {user.name.split(' ')[0]}
-                  </span>
-                  {user.college && (
-                    <span className="text-[8px] font-mono text-emerald-400 flex items-center gap-0.5 leading-none">
-                      <GraduationCap className="w-2.5 h-2.5" /> {user.college}
-                    </span>
-                  )}
-                </div>
+                <span className="text-[10px] sm:text-xs font-semibold text-zinc-200 max-w-[65px] sm:max-w-[100px] truncate">
+                  {user.name.split(' ')[0]}
+                </span>
                 <button
                   onClick={logout}
-                  className="text-zinc-500 hover:text-rose-400 ml-1 p-0.5"
+                  className="text-zinc-500 hover:text-rose-400 p-0.5 ml-0.5"
                   title="Sign Out"
                 >
                   <LogOut className="w-3 h-3" />
@@ -320,16 +318,17 @@ export default function Home() {
                   setAuthReason(undefined);
                   setIsAuthOpen(true);
                 }}
-                className="flex items-center gap-1 text-[11px] font-mono text-zinc-300 bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 rounded-xl border border-zinc-700 transition"
+                className="flex items-center gap-1 text-[10px] sm:text-[11px] font-mono text-zinc-200 bg-zinc-800 hover:bg-zinc-700 px-2 sm:px-2.5 py-1 rounded-xl border border-zinc-700 transition"
               >
-                <LogIn className="w-3 h-3 text-emerald-400" /> Sign In
+                <LogIn className="w-3 h-3 text-emerald-400" />
+                <span>Sign In</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pointer-events-auto py-1">
+        {/* Category Filter Pills (Horizontal Scroll) */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pointer-events-auto px-0.5 py-0.5">
           {categories.map((cat) => {
             const Icon = cat.icon;
             const active = selectedCategory === cat.value && !safeHavensOnly;
@@ -340,13 +339,13 @@ export default function Home() {
                   setSelectedCategory(cat.value);
                   setSafeHavensOnly(false);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition border ${
+                className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-medium whitespace-nowrap transition border ${
                   active
-                    ? 'bg-zinc-100 text-zinc-900 border-zinc-100 shadow-md'
-                    : 'bg-zinc-900/90 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                    ? 'bg-zinc-100 text-zinc-900 border-zinc-100 shadow-md font-semibold'
+                    : 'bg-zinc-950/90 sm:bg-zinc-900/90 text-zinc-400 border-zinc-800/90 hover:text-zinc-200 backdrop-blur-md'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                 {cat.label}
               </button>
             );
@@ -367,47 +366,54 @@ export default function Home() {
         />
       </div>
 
-      {/* Bottom Floating Navigation Action Bar */}
-      <nav className="absolute bottom-6 left-4 right-4 z-10 flex items-center justify-between gap-2 pointer-events-none">
-        <button
-          onClick={() => setIsRouletteOpen(true)}
-          className="pointer-events-auto flex-[1.6] flex items-center justify-center gap-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold py-3.5 px-2 rounded-2xl shadow-lg shadow-emerald-950/40 transition active:scale-95 text-xs"
-        >
-          <Sparkles className="w-3.5 h-3.5 fill-zinc-950 shrink-0" />
-          Roulette
-        </button>
+      {/* Bottom Floating Navigation Action Dock */}
+      <nav className="absolute bottom-3 sm:bottom-6 left-3 sm:left-4 right-3 sm:right-4 z-20 pointer-events-none">
+        <div className="max-w-md mx-auto bg-zinc-950/95 sm:bg-zinc-900/95 backdrop-blur-xl border border-zinc-800/80 p-1.5 rounded-2xl shadow-2xl flex items-center justify-between gap-1 pointer-events-auto">
+          {/* Roulette */}
+          <button
+            onClick={() => setIsRouletteOpen(true)}
+            className="flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 active:scale-95 transition"
+          >
+            <Sparkles className="w-4 h-4 mb-0.5" />
+            <span className="text-[10px] font-semibold tracking-tight">Roulette</span>
+          </button>
 
-        <button
-          onClick={() => requireAuthForAction('Verify your identity with Google to enter Chai Buddy', () => setIsBuddyOpen(true))}
-          className="pointer-events-auto flex-[1.4] flex items-center justify-center gap-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 px-2 rounded-2xl shadow-lg shadow-amber-950/40 transition active:scale-95 text-xs"
-        >
-          <Coffee className="w-3.5 h-3.5 shrink-0" />
-          Chai Buddy
-        </button>
+          {/* Chai Buddy */}
+          <button
+            onClick={() => requireAuthForAction('Verify your identity with Google to enter Chai Buddy', () => setIsBuddyOpen(true))}
+            className="flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 active:scale-95 transition"
+          >
+            <Coffee className="w-4 h-4 mb-0.5" />
+            <span className="text-[10px] font-semibold tracking-tight">Buddy</span>
+          </button>
 
-        <button
-          onClick={() => setIsRadarOpen(true)}
-          className="pointer-events-auto flex-1 flex items-center justify-center gap-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-amber-500/40 font-semibold py-3.5 px-2 rounded-2xl shadow-lg transition active:scale-95 text-xs"
-        >
-          <Radar className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
-          Radar
-        </button>
+          {/* Radar */}
+          <button
+            onClick={() => setIsRadarOpen(true)}
+            className="flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl hover:bg-zinc-800/60 text-zinc-300 active:scale-95 transition"
+          >
+            <Radar className="w-4 h-4 mb-0.5 text-amber-400 animate-pulse" />
+            <span className="text-[10px] font-medium tracking-tight">Radar</span>
+          </button>
 
-        <button
-          onClick={() => setIsConfessionsOpen(true)}
-          className="pointer-events-auto flex-1 flex items-center justify-center gap-1 bg-zinc-900 hover:bg-zinc-800 text-purple-300 border border-purple-800/40 font-semibold py-3.5 px-2 rounded-2xl shadow-lg transition active:scale-95 text-xs"
-        >
-          <Ghost className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-          Wall
-        </button>
+          {/* Ghost Wall */}
+          <button
+            onClick={() => setIsConfessionsOpen(true)}
+            className="flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl hover:bg-zinc-800/60 text-zinc-300 active:scale-95 transition"
+          >
+            <Ghost className="w-4 h-4 mb-0.5 text-purple-400" />
+            <span className="text-[10px] font-medium tracking-tight">Wall</span>
+          </button>
 
-        <button
-          onClick={() => setIsSafetyOpen(true)}
-          className="pointer-events-auto flex items-center justify-center bg-rose-600 hover:bg-rose-500 text-zinc-100 p-3.5 rounded-2xl border border-rose-500 shadow-lg shadow-rose-950/50 transition active:scale-95 shrink-0"
-          aria-label="Emergency SOS Suite"
-        >
-          <PhoneCall className="w-4 h-4" />
-        </button>
+          {/* SOS Emergency Button */}
+          <button
+            onClick={() => setIsSafetyOpen(true)}
+            className="w-10 h-10 flex items-center justify-center bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-lg shadow-rose-950/60 transition active:scale-95 shrink-0 ml-0.5"
+            aria-label="Emergency SOS Suite"
+          >
+            <PhoneCall className="w-4 h-4" />
+          </button>
+        </div>
       </nav>
 
       {/* Admin Queue Modal */}
@@ -510,4 +516,4 @@ export default function Home() {
       />
     </main>
   );
-}
+  }
