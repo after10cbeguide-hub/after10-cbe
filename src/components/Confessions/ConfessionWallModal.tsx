@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Confession } from '@/types';
 import { INITIAL_CONFESSIONS } from '@/data/seed-confessions';
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { Ghost, X, Flame, Send, Moon, Clock, Lock, MessageSquare, Grid } from 'lucide-react';
 import GhostPixelCanvas from './GhostPixelCanvas';
 
@@ -22,12 +24,15 @@ const CBE_AREAS = [
 ];
 
 export default function ConfessionWallModal({ isOpen, onClose }: Props) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'whispers' | 'canvas'>('whispers');
   const [confessions, setConfessions] = useState<Confession[]>([]);
   const [newText, setNewText] = useState('');
   const [selectedArea, setSelectedArea] = useState(CBE_AREAS[0]);
-  const [isNightTime, setIsNightTime] = useState(true);
+  const [isNightTime, setIsNightTime] = useState(false);
   const [devBypass, setDevBypass] = useState(false);
+
+  const isDevOrAdmin = user?.role === 'admin' || (typeof window !== 'undefined' && window.location.hostname === 'localhost');
 
   useEffect(() => {
     const checkNightWindow = () => {
@@ -40,6 +45,7 @@ export default function ConfessionWallModal({ isOpen, onClose }: Props) {
     checkNightWindow();
     const interval = setInterval(checkNightWindow, 60000);
 
+    // Initial load from storage / seeds
     const saved = localStorage.getItem('after10_confessions');
     if (saved) {
       try {
@@ -54,41 +60,91 @@ export default function ConfessionWallModal({ isOpen, onClose }: Props) {
     return () => clearInterval(interval);
   }, []);
 
-  const handlePost = (e: React.FormEvent) => {
+  // Supabase Realtime Broadcast listener for multi-device sync
+  useEffect(() => {
+    const channel = supabase.channel('realtime_ghost_wall', {
+      config: { broadcast: { self: false } },
+    });
+
+    channel
+      .on('broadcast', { event: 'new_confession' }, ({ payload }) => {
+        if (payload?.confession) {
+          setConfessions((prev) => {
+            if (prev.some((c) => c.id === payload.confession.id)) return prev;
+            const updated = [payload.confession, ...prev];
+            localStorage.setItem('after10_confessions', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      })
+      .on('broadcast', { event: 'upvote_confession' }, ({ payload }) => {
+        if (payload?.id) {
+          setConfessions((prev) => {
+            const updated = prev.map((c) =>
+              c.id === payload.id ? { ...c, upvotes: c.upvotes + 1 } : c
+            );
+            localStorage.setItem('after10_confessions', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handlePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newText.trim()) return;
 
     const newConfession: Confession = {
-      id: Date.now().toString(),
+      id: `conf_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       text: newText.trim(),
       area: selectedArea,
       upvotes: 1,
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
+    // Update local state first
     const updated = [newConfession, ...confessions];
     setConfessions(updated);
     localStorage.setItem('after10_confessions', JSON.stringify(updated));
     setNewText('');
+
+    // Broadcast instantaneously to all connected phones/laptops
+    await supabase.channel('realtime_ghost_wall').send({
+      type: 'broadcast',
+      event: 'new_confession',
+      payload: { confession: newConfession },
+    });
   };
 
-  const handleUpvote = (id: string) => {
+  const handleUpvote = async (id: string) => {
     const updated = confessions.map((c) =>
       c.id === id ? { ...c, upvotes: c.upvotes + 1 } : c
     );
     setConfessions(updated);
     localStorage.setItem('after10_confessions', JSON.stringify(updated));
+
+    // Broadcast upvote to others
+    await supabase.channel('realtime_ghost_wall').send({
+      type: 'broadcast',
+      event: 'upvote_confession',
+      payload: { id },
+    });
   };
 
   if (!isOpen) return null;
 
-  const isUnlocked = isNightTime || devBypass;
+  const isUnlocked = isNightTime || (devBypass && isDevOrAdmin);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md transition-all">
       <div className="bg-zinc-950 border border-zinc-800 w-full max-w-lg rounded-t-3xl sm:rounded-3xl h-[90vh] sm:h-[84vh] flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300">
         
-        {/* Header with Switcher Tabs */}
+        {/* Header */}
         <div className="p-3.5 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/60">
           <div className="flex items-center gap-2">
             <div className="p-2 bg-purple-500/10 text-purple-400 rounded-xl">
@@ -105,7 +161,7 @@ export default function ConfessionWallModal({ isOpen, onClose }: Props) {
             </div>
           </div>
 
-          {/* Tab Switcher: Whispers vs. Pixel Canvas */}
+          {/* Switcher */}
           <div className="flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800">
             <button
               onClick={() => setActiveTab('whispers')}
@@ -139,7 +195,7 @@ export default function ConfessionWallModal({ isOpen, onClose }: Props) {
           </button>
         </div>
 
-        {/* LOCKED SCREEN (Shown if not night time) */}
+        {/* LOCKED SCREEN */}
         {!isUnlocked ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
             <div className="w-16 h-16 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4 text-purple-400">
@@ -147,34 +203,35 @@ export default function ConfessionWallModal({ isOpen, onClose }: Props) {
             </div>
             <h4 className="text-lg font-bold text-zinc-200 mb-1">Ghosts Are Asleep</h4>
             <p className="text-zinc-500 text-xs max-w-xs mb-6">
-              The Wall unlocks only from 10:00 PM to 6:00 AM.
+              The Wall unlocks only from 10:00 PM to 6:00 AM for anonymous night owls.
             </p>
-            <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 bg-zinc-900 px-3 py-1.5 rounded-xl border border-zinc-800 mb-6">
+            <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 bg-zinc-900 px-3 py-1.5 rounded-xl border border-zinc-800">
               <Clock className="w-3.5 h-3.5 text-purple-400" />
               <span>Unlocks tonight at 10:00 PM</span>
             </div>
-            <button
-              onClick={() => setDevBypass(true)}
-              className="text-xs text-purple-400/80 hover:text-purple-300 underline font-mono"
-            >
-              [Dev Mode: Preview Wall Now]
-            </button>
+
+            {isDevOrAdmin && (
+              <button
+                onClick={() => setDevBypass(true)}
+                className="mt-6 text-xs text-purple-400/80 hover:text-purple-300 underline font-mono"
+              >
+                [Admin Bypass: Preview Wall Now]
+              </button>
+            )}
           </div>
         ) : (
-          /* UNLOCKED CONTENT (Tab Switch) */
+          /* UNLOCKED CONTENT */
           <>
             {activeTab === 'canvas' ? (
-              /* PIXEL BOARD TAB */
               <div className="flex-1 overflow-hidden">
                 <GhostPixelCanvas />
               </div>
             ) : (
-              /* TEXT CONFESSIONS TAB */
               <>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
-                  {devBypass && !isNightTime && (
-                    <div className="text-[11px] font-mono text-amber-400/80 bg-amber-950/40 border border-amber-800/40 p-2 rounded-xl text-center">
-                      🛠️ Dev preview active (Outside 10PM - 6AM)
+                  {isDevOrAdmin && devBypass && !isNightTime && (
+                    <div className="text-[11px] font-mono text-purple-400 bg-purple-950/40 border border-purple-800/40 p-2 rounded-xl text-center">
+                      Admin preview active (Outside 10PM - 6AM)
                     </div>
                   )}
 
