@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { 
   Coffee, 
   Sparkles, 
@@ -11,10 +13,8 @@ import {
   ShieldAlert, 
   ShieldCheck, 
   Bike, 
-  User, 
   Footprints,
-  MessageCircle,
-  AlertTriangle
+  UserCheck
 } from 'lucide-react';
 
 interface Props {
@@ -48,12 +48,15 @@ const TRANSPORT_MODES = [
 
 interface ChatMessage {
   id: string;
-  sender: 'me' | 'buddy';
+  senderId: string;
+  senderName: string;
   text: string;
   time: string;
 }
 
 export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
+  const { user } = useAuth();
+
   // Steps: 'setup' -> 'searching' -> 'chat'
   const [stage, setStage] = useState<'setup' | 'searching' | 'chat'>('setup');
   
@@ -63,35 +66,131 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
   const [transport, setTransport] = useState(TRANSPORT_MODES[0].id);
   const [girlsOnly, setGirlsOnly] = useState(false);
 
+  // Match state
+  const [matchedBuddy, setMatchedBuddy] = useState<{ id: string; name: string } | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
+
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const [timeLeft, setTimeLeft] = useState<number>(20 * 60); // 20 minutes countdown in seconds
+  const [timeLeft, setTimeLeft] = useState<number>(20 * 60); // 20 minutes rendezvous window
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Unique local ID fallback if not signed in
+  const myUserId = user?.id || (typeof window !== 'undefined' ? (localStorage.getItem('chai_temp_id') || `anon_${Date.now()}`) : 'anon');
+  const myUserName = user?.name ? user.name.split(' ')[0] : 'Night Owl';
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !localStorage.getItem('chai_temp_id')) {
+      localStorage.setItem('chai_temp_id', myUserId);
+    }
+  }, [myUserId]);
 
   // Clean room on close or burn
   const resetSession = () => {
     setStage('setup');
     setMessages([]);
+    setMatchedBuddy(null);
+    setRoomId(null);
     setTimeLeft(20 * 60);
     localStorage.removeItem('after10_chai_buddy_chat');
   };
 
-  // Handle active session persistence
+  // 1. MATCHMAKING QUEUE (LOBBY)
   useEffect(() => {
-    const saved = localStorage.getItem('after10_chai_buddy_chat');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.messages && parsed.messages.length > 0) {
-          setMessages(parsed.messages);
+    if (stage !== 'searching') return;
+
+    const lobbyChannel = supabase.channel('chai_matchmaking_lobby', {
+      config: { presence: { key: myUserId } },
+    });
+
+    lobbyChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = lobbyChannel.presenceState();
+        const allCandidates: any[] = [];
+        
+        Object.keys(state).forEach((key) => {
+          const presences = state[key] as any[];
+          presences.forEach((p) => {
+            if (p.userId !== myUserId) {
+              allCandidates.push(p);
+            }
+          });
+        });
+
+        // Match with candidate in the same zone
+        const match = allCandidates.find((c) => c.zone === zone);
+
+        if (match) {
+          const generatedRoomId = `room_${[myUserId, match.userId].sort().join('_')}`;
+          
+          // Notify the other peer
+          lobbyChannel.send({
+            type: 'broadcast',
+            event: 'match_found',
+            payload: {
+              targetId: match.userId,
+              buddy: { id: myUserId, name: myUserName },
+              roomId: generatedRoomId,
+              zone,
+            },
+          });
+
+          setMatchedBuddy({ id: match.userId, name: match.name });
+          setRoomId(generatedRoomId);
           setStage('chat');
         }
-      } catch (err) {
-        console.warn('Could not restore chat', err);
-      }
-    }
-  }, []);
+      })
+      .on('broadcast', { event: 'match_found' }, ({ payload }) => {
+        if (payload?.targetId === myUserId) {
+          setMatchedBuddy(payload.buddy);
+          setRoomId(payload.roomId);
+          setStage('chat');
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await lobbyChannel.track({
+            userId: myUserId,
+            name: myUserName,
+            zone,
+            vibe,
+            transport,
+            joinedAt: Date.now(),
+          });
+        }
+      });
+
+    return () => {
+      lobbyChannel.untrack();
+      supabase.removeChannel(lobbyChannel);
+    };
+  }, [stage, zone, vibe, transport, myUserId, myUserName]);
+
+  // 2. ACTIVE CHAT ROOM CHANNEL
+  useEffect(() => {
+    if (stage !== 'chat' || !roomId) return;
+
+    const chatChannel = supabase.channel(`chai_room_${roomId}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    chatChannel
+      .on('broadcast', { event: 'chat_msg' }, ({ payload }) => {
+        if (payload?.msg) {
+          setMessages((prev) => [...prev, payload.msg]);
+        }
+      })
+      .on('broadcast', { event: 'chat_burn' }, () => {
+        alert('Your Chai Buddy ended and wiped the rendezvous room.');
+        resetSession();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(chatChannel);
+    };
+  }, [stage, roomId]);
 
   // 20-Minute Countdown Loop during chat
   useEffect(() => {
@@ -101,7 +200,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
         setTimeLeft((prev) => {
           if (prev <= 1) {
             resetSession();
-            alert('Chai Buddy 20-minute rendezvous window expired. Chat wiped cleanly.');
+            alert('Chai Buddy rendezvous window expired. Room wiped cleanly.');
             return 0;
           }
           return prev - 1;
@@ -116,66 +215,40 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Start Searching & Matchmaker Simulator
-  const handleStartSearch = () => {
-    setStage('searching');
-
-    // Simulate match connection after 3.5 seconds
-    setTimeout(() => {
-      const initialMessages: ChatMessage[] = [
-        {
-          id: 'msg_1',
-          sender: 'buddy',
-          text: `Hey! Also down for ${VIBE_OPTIONS.find(v => v.id === vibe)?.label.split(' ')[1] || 'chai'}. Where are you heading around ${zone.split('/')[0]}?`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }
-      ];
-
-      setMessages(initialMessages);
-      setStage('chat');
-      localStorage.setItem('after10_chai_buddy_chat', JSON.stringify({ messages: initialMessages, zone }));
-    }, 3500);
-  };
-
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !roomId) return;
 
     const newMsg: ChatMessage = {
-      id: `msg_${Date.now()}`,
-      sender: 'me',
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      senderId: myUserId,
+      senderName: myUserName,
       text: inputText.trim(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    const updated = [...messages, newMsg];
-    setMessages(updated);
+    setMessages((prev) => [...prev, newMsg]);
     setInputText('');
-    localStorage.setItem('after10_chai_buddy_chat', JSON.stringify({ messages: updated, zone }));
 
-    // Simulated responsive peer answer
-    setTimeout(() => {
-      const buddyReplies = [
-        "Sounds good! Which spot are you thinking?",
-        "I'm 5 mins away on bike, tell me where to park.",
-        "Wearing a dark hoodie, see you there at the counter.",
-        "Done. Let's grab it quick."
-      ];
-      const randomReply = buddyReplies[Math.floor(Math.random() * buddyReplies.length)];
+    // Broadcast message directly to matched buddy's screen
+    await supabase.channel(`chai_room_${roomId}`).send({
+      type: 'broadcast',
+      event: 'chat_msg',
+      payload: { msg: newMsg },
+    });
+  };
 
-      const buddyMsg: ChatMessage = {
-        id: `msg_${Date.now() + 1}`,
-        sender: 'buddy',
-        text: randomReply,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-
-      setMessages((prev) => {
-        const next = [...prev, buddyMsg];
-        localStorage.setItem('after10_chai_buddy_chat', JSON.stringify({ messages: next, zone }));
-        return next;
-      });
-    }, 1800);
+  const handleBurnRoom = async () => {
+    if (confirm('Burn and wipe this chat room completely for both participants?')) {
+      if (roomId) {
+        await supabase.channel(`chai_room_${roomId}`).send({
+          type: 'broadcast',
+          event: 'chat_burn',
+          payload: {},
+        });
+      }
+      resetSession();
+    }
   };
 
   const formatTimer = (seconds: number) => {
@@ -200,11 +273,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
               <div className="flex items-center gap-1.5">
                 <h3 className="font-bold text-zinc-100 text-sm sm:text-base">Chai Buddy</h3>
                 <span className="text-[9px] font-mono bg-amber-950/70 text-amber-300 border border-amber-800/50 px-1.5 py-0.5 rounded-full">
-                  1-ON-1
+                  LIVE 1-ON-1
                 </span>
               </div>
               <p className="text-zinc-500 text-[11px]">
-                {stage === 'chat' ? 'Private Burner Rendezvous' : 'Late night companion matcher'}
+                {stage === 'chat' ? `Connected with ${matchedBuddy?.name || 'Buddy'}` : 'Late night companion matcher'}
               </p>
             </div>
           </div>
@@ -212,17 +285,18 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
           <div className="flex items-center gap-2">
             {stage === 'chat' && (
               <button
-                onClick={() => {
-                  if (confirm('Burn and wipe this chat room completely?')) resetSession();
-                }}
+                onClick={handleBurnRoom}
                 className="flex items-center gap-1 text-[10px] font-mono bg-rose-950 text-rose-300 border border-rose-800/60 px-2 py-1 rounded-xl hover:bg-rose-900 transition"
-                title="Wipe & Exit"
+                title="Wipe & Exit for both"
               >
                 <Flame className="w-3 h-3 text-rose-400" /> Burn
               </button>
             )}
             <button
-              onClick={onClose}
+              onClick={() => {
+                if (stage === 'searching') setStage('setup');
+                onClose();
+              }}
               className="text-zinc-400 hover:text-zinc-100 p-1.5 rounded-xl hover:bg-zinc-800/50"
             >
               <X className="w-5 h-5" />
@@ -314,11 +388,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
 
             {/* Start Button */}
             <button
-              onClick={handleStartSearch}
+              onClick={() => setStage('searching')}
               className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 rounded-xl text-xs transition active:scale-95 shadow-lg shadow-amber-950/40"
             >
               <Sparkles className="w-4 h-4 fill-zinc-950" />
-              Find Chai Buddy in My Zone
+              Search Live Buddies in {zone.split('/')[0]}
             </button>
           </div>
         )}
@@ -334,15 +408,15 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
             </div>
             
             <div>
-              <h4 className="text-base font-bold text-zinc-100">Scanning Night Radar...</h4>
+              <h4 className="text-base font-bold text-zinc-100">Waiting for peer in {zone.split('/')[0]}...</h4>
               <p className="text-xs text-zinc-400 mt-1 max-w-xs">
-                Looking for active night owls around <span className="text-amber-400 font-medium">{zone}</span>
+                Have your buddy select <span className="text-amber-400 font-semibold">{zone}</span> on their phone now.
               </p>
             </div>
 
             <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-500 bg-zinc-900 px-3 py-1.5 rounded-xl border border-zinc-800">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              {girlsOnly ? 'Filtering: Girls Only' : 'Searching all riders'}
+              Listening to live radio queue...
             </div>
 
             <button
@@ -358,11 +432,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
         {stage === 'chat' && (
           <div className="flex-1 flex flex-col h-full overflow-hidden">
             
-            {/* Rendezvous Status & Countdown Bar */}
-            <div className="p-2.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between text-xs">
+            {/* Status Bar */}
+            <div className="p-2.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between text-xs shrink-0">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-zinc-200 font-semibold text-xs">Buddy Matched</span>
+                <UserCheck className="w-4 h-4 text-emerald-400" />
+                <span className="text-zinc-200 font-bold text-xs">{matchedBuddy?.name || 'Night Owl'}</span>
                 <span className="text-[10px] text-zinc-500">• {zone.split('/')[0]}</span>
               </div>
 
@@ -372,7 +446,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
                   {formatTimer(timeLeft)}
                 </div>
 
-                {/* Emergency Panic SOS bail inside match */}
                 <button
                   onClick={() => {
                     onClose();
@@ -388,40 +461,48 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
 
             {/* Private Message Stream */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
-              <div className="p-2.5 bg-zinc-900/60 border border-zinc-800 rounded-xl text-center text-[11px] text-zinc-400 mb-2">
-                🔒 Private 1-on-1 burner room. Decide where to meet. Chat self-destructs when timer hits zero or you tap &apos;Burn&apos;.
+              <div className="p-2 bg-zinc-900/60 border border-zinc-800 rounded-xl text-center text-[10px] text-zinc-400">
+                🔒 Connected! Real-time peer messages. Room wipes when timer runs out or when either person taps &apos;Burn&apos;.
               </div>
 
-              {messages.map((m) => {
-                const isMe = m.sender === 'me';
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-                  >
+              {messages.length === 0 ? (
+                <div className="h-32 flex items-center justify-center text-xs text-zinc-500">
+                  Say hi to your Chai Buddy...
+                </div>
+              ) : (
+                messages.map((m) => {
+                  const isMe = m.senderId === myUserId;
+                  return (
                     <div
-                      className={`max-w-[78%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                        isMe
-                          ? 'bg-amber-500 text-zinc-950 font-medium rounded-br-none shadow-md'
-                          : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-bl-none'
-                      }`}
+                      key={m.id}
+                      className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
                     >
-                      {m.text}
+                      <div
+                        className={`max-w-[78%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
+                          isMe
+                            ? 'bg-amber-500 text-zinc-950 font-medium rounded-br-none shadow-md'
+                            : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-bl-none'
+                        }`}
+                      >
+                        {m.text}
+                      </div>
+                      <span className="text-[9px] text-zinc-500 mt-1 px-1">
+                        {isMe ? 'You' : m.senderName} • {m.time}
+                      </span>
                     </div>
-                    <span className="text-[9px] text-zinc-500 mt-1 px-1">{m.time}</span>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
               <div ref={chatBottomRef} />
             </div>
 
-            {/* Quick Icebreaker Suggestions */}
-            <div className="px-3 py-1.5 bg-zinc-950 border-t border-zinc-800/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {/* Quick Suggestions */}
+            <div className="px-3 py-1.5 bg-zinc-950 border-t border-zinc-800/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar shrink-0">
               {[
                 "Which stall are you at?",
                 "I'm on bike, 5 mins away",
-                "Exterior table in black jacket",
-                "Finished & headed home"
+                "Exterior table in dark jacket",
+                "Heading towards the spot now"
               ].map((phrase, idx) => (
                 <button
                   key={idx}
@@ -435,12 +516,12 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
             </div>
 
             {/* Chat Input Bar */}
-            <form onSubmit={handleSendMessage} className="p-3 bg-zinc-900/80 border-t border-zinc-800 flex items-center gap-2">
+            <form onSubmit={handleSendMessage} className="p-3 bg-zinc-900/80 border-t border-zinc-800 flex items-center gap-2 shrink-0">
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Coordinate meetup or tea spot..."
+                placeholder={`Message ${matchedBuddy?.name || 'Buddy'}...`}
                 maxLength={180}
                 className="flex-1 bg-zinc-950 border border-zinc-800 text-zinc-100 placeholder-zinc-500 text-xs rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-amber-500 transition"
               />
