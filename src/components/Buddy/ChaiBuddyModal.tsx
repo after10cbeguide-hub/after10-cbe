@@ -14,7 +14,8 @@ import {
   ShieldCheck, 
   Bike, 
   Footprints,
-  UserCheck
+  UserCheck,
+  Compass
 } from 'lucide-react';
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
 }
 
 const CBE_ZONES = [
+  'All Coimbatore (Any Zone)',
   'Peelamedu / Hopes / PSG',
   'RS Puram / DB Road',
   'Saibaba Colony / NSR Road',
@@ -67,13 +69,13 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
   const [girlsOnly, setGirlsOnly] = useState(false);
 
   // Match state
-  const [matchedBuddy, setMatchedBuddy] = useState<{ id: string; name: string } | null>(null);
+  const [matchedBuddy, setMatchedBuddy] = useState<{ id: string; name: string; zone?: string } | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const [timeLeft, setTimeLeft] = useState<number>(20 * 60); // 20 minutes rendezvous window
+  const [timeLeft, setTimeLeft] = useState<number>(20 * 60); // 20 minutes countdown
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   // Unique local ID fallback if not signed in
@@ -86,7 +88,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     }
   }, [myUserId]);
 
-  // Clean room on close or burn
   const resetSession = () => {
     setStage('setup');
     setMessages([]);
@@ -96,7 +97,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     localStorage.removeItem('after10_chai_buddy_chat');
   };
 
-  // 1. MATCHMAKING QUEUE (LOBBY)
+  // MATCHMAKING LOBBY
   useEffect(() => {
     if (stage !== 'searching') return;
 
@@ -118,25 +119,28 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
           });
         });
 
-        // Match with candidate in the same zone
-        const match = allCandidates.find((c) => c.zone === zone);
+        // Flexible Zone Matching:
+        // Match if both are looking for the same zone OR if either candidate selected "All Coimbatore (Any Zone)"
+        const match = allCandidates.find((c) => {
+          const isUniversalSearch = zone === 'All Coimbatore (Any Zone)' || c.zone === 'All Coimbatore (Any Zone)';
+          const isSameZone = c.zone === zone;
+          return isUniversalSearch || isSameZone;
+        });
 
         if (match) {
           const generatedRoomId = `room_${[myUserId, match.userId].sort().join('_')}`;
           
-          // Notify the other peer
           lobbyChannel.send({
             type: 'broadcast',
             event: 'match_found',
             payload: {
               targetId: match.userId,
-              buddy: { id: myUserId, name: myUserName },
+              buddy: { id: myUserId, name: myUserName, zone },
               roomId: generatedRoomId,
-              zone,
             },
           });
 
-          setMatchedBuddy({ id: match.userId, name: match.name });
+          setMatchedBuddy({ id: match.userId, name: match.name, zone: match.zone });
           setRoomId(generatedRoomId);
           setStage('chat');
         }
@@ -167,7 +171,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     };
   }, [stage, zone, vibe, transport, myUserId, myUserName]);
 
-  // 2. ACTIVE CHAT ROOM CHANNEL
+  // ACTIVE CHAT ROOM CHANNEL
   useEffect(() => {
     if (stage !== 'chat' || !roomId) return;
 
@@ -192,7 +196,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     };
   }, [stage, roomId]);
 
-  // 20-Minute Countdown Loop during chat
+  // 20-Minute Countdown
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (stage === 'chat' && timeLeft > 0) {
@@ -230,7 +234,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
     setMessages((prev) => [...prev, newMsg]);
     setInputText('');
 
-    // Broadcast message directly to matched buddy's screen
     await supabase.channel(`chai_room_${roomId}`).send({
       type: 'broadcast',
       event: 'chat_msg',
@@ -320,6 +323,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
                   <option key={z} value={z}>{z}</option>
                 ))}
               </select>
+              {zone === 'All Coimbatore (Any Zone)' && (
+                <p className="text-[10px] text-amber-400/90 mt-1 flex items-center gap-1">
+                  <Compass className="w-3 h-3" /> Connects with anyone looking anywhere across Coimbatore
+                </p>
+              )}
             </div>
 
             {/* Vibe Selector */}
@@ -392,7 +400,9 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
               className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-3.5 rounded-xl text-xs transition active:scale-95 shadow-lg shadow-amber-950/40"
             >
               <Sparkles className="w-4 h-4 fill-zinc-950" />
-              Search Live Buddies in {zone.split('/')[0]}
+              {zone === 'All Coimbatore (Any Zone)' 
+                ? 'Search All Over Coimbatore' 
+                : `Search Live Buddies in ${zone.split('/')[0]}`}
             </button>
           </div>
         )}
@@ -408,9 +418,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
             </div>
             
             <div>
-              <h4 className="text-base font-bold text-zinc-100">Waiting for peer in {zone.split('/')[0]}...</h4>
+              <h4 className="text-base font-bold text-zinc-100">Scanning Night Radar...</h4>
               <p className="text-xs text-zinc-400 mt-1 max-w-xs">
-                Have your buddy select <span className="text-amber-400 font-semibold">{zone}</span> on their phone now.
+                {zone === 'All Coimbatore (Any Zone)'
+                  ? 'Listening for any available night owl across Coimbatore'
+                  : `Looking for active night owls around ${zone.split('/')[0]}`}
               </p>
             </div>
 
@@ -437,7 +449,9 @@ export default function ChaiBuddyModal({ isOpen, onClose, onOpenSOS }: Props) {
               <div className="flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-emerald-400" />
                 <span className="text-zinc-200 font-bold text-xs">{matchedBuddy?.name || 'Night Owl'}</span>
-                <span className="text-[10px] text-zinc-500">• {zone.split('/')[0]}</span>
+                <span className="text-[10px] text-zinc-500">
+                  • {matchedBuddy?.zone ? matchedBuddy.zone.split('/')[0] : 'CBE'}
+                </span>
               </div>
 
               <div className="flex items-center gap-2">
