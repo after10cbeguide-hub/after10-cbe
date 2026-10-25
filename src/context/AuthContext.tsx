@@ -1,12 +1,14 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 import { UserProfile } from '@/types';
 
 interface AuthContextType {
   user: UserProfile | null;
-  loginWithGoogle: (mockEmail?: string, mockName?: string) => void;
-  logout: () => void;
+  loginWithGoogle: () => Promise<void>;
+  loginWithMock: (mockEmail: string, mockName: string) => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,43 +28,91 @@ function detectCollege(email: string): string | undefined {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
 
+  // Sync Supabase Auth state across the app
   useEffect(() => {
-    const saved = localStorage.getItem('after10_user_session');
-    if (saved) {
-      try {
-        setUser(JSON.parse(saved));
-      } catch {
-        localStorage.removeItem('after10_user_session');
+    // 1. Check current active session on load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        handleUserAuthentication(session.user);
       }
-    }
+    });
+
+    // 2. Subscribe to Authentication changes (login, logout, token refreshes)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        handleUserAuthentication(session.user);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const loginWithGoogle = (customEmail?: string, customName?: string) => {
-    const email = customEmail || 'student@psgtech.ac.in';
-    const name = customName || 'Karthik R';
+  const handleUserAuthentication = (supabaseUser: any) => {
+    const email = supabaseUser.email || '';
     const college = detectCollege(email);
+    
+    // Retrieve OAuth Metadata from the Google Account
+    const userMeta = supabaseUser.user_metadata || {};
+    const name = userMeta.full_name || userMeta.name || email.split('@')[0] || 'Night Owl';
+    const avatarUrl = userMeta.avatar_url || userMeta.picture || `https://api.dicebear.com/7.x/bottts/svg?seed=${name}`;
 
-    const newUser: UserProfile = {
-      id: `usr_${Date.now()}`,
+    const loggedInUser: UserProfile = {
+      id: supabaseUser.id,
       name,
       email,
-      avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${name}`,
+      avatarUrl,
       college,
       isStudentVerified: !!college,
       role: email.includes('admin') ? 'admin' : 'user',
     };
 
-    setUser(newUser);
-    localStorage.setItem('after10_user_session', JSON.stringify(newUser));
+    setUser(loggedInUser);
   };
 
-  const logout = () => {
+  const loginWithGoogle = async () => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error('Google Auth Failed:', err.message);
+    }
+  };
+
+  // Keep Mock login active for testing predefined simulation accounts
+  const loginWithMock = (mockEmail: string, mockName: string) => {
+    const college = detectCollege(mockEmail);
+    const mockUser: UserProfile = {
+      id: `usr_mock_${Date.now()}`,
+      name: mockName,
+      email: mockEmail,
+      avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${mockName}`,
+      college,
+      isStudentVerified: !!college,
+      role: mockEmail.includes('admin') ? 'admin' : 'user',
+    };
+    setUser(mockUser);
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('after10_user_session');
   };
 
   return (
-    <AuthContext.Provider value={{ user, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ user, loginWithGoogle, loginWithMock, logout }}>
       {children}
     </AuthContext.Provider>
   );
