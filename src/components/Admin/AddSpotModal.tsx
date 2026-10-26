@@ -10,8 +10,7 @@ import {
   X, 
   Store, 
   Check, 
-  AlertTriangle,
-  KeyRound
+  AlertTriangle 
 } from 'lucide-react';
 
 interface Props {
@@ -42,7 +41,6 @@ export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
   const [isGirlsSafe, setIsGirlsSafe] = useState(true);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
-  const [adminPasscode, setAdminPasscode] = useState('');
   
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(false);
@@ -85,9 +83,8 @@ export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
     const finalLat = lat ?? 11.0168;
     const finalLng = lng ?? 76.9558;
 
-    // Admin Ground-Check Key verification
-    const isAdmin = adminPasscode.trim() === 'cbe10';
-    const status: 'verified' | 'pending' = isAdmin ? 'verified' : 'pending';
+    // All suggestions default directly to pending for admin verification
+    const status: 'verified' | 'pending' = 'pending';
 
     const newSpot: Spot = {
       id: `spot_${Date.now()}`,
@@ -114,7 +111,6 @@ export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
       setName('');
       setLat(null);
       setLng(null);
-      setAdminPasscode('');
       onClose();
     }, 1800);
   };
@@ -148,12 +144,10 @@ export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
               <Check className="w-6 h-6" />
             </div>
             <h4 className="text-base font-bold text-zinc-100">
-              {submittedStatus === 'verified' ? 'Spot Verified & Published!' : 'Submitted for Admin Review!'}
+              Submitted for Admin Review!
             </h4>
             <p className="text-xs text-zinc-400 max-w-xs">
-              {submittedStatus === 'verified'
-                ? 'Your spot is now live on the night map.'
-                : 'Thanks for the suggestion! Our team will verify and publish this spot shortly.'}
+              Thanks for the suggestion! The admin team will verify and publish this spot shortly.
             </p>
           </div>
         ) : (
@@ -270,23 +264,6 @@ export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
                 className="rounded border-zinc-700 bg-zinc-950 text-emerald-500 focus:ring-0"
               />
             </label>
-
-            {/* Admin Key (Ground Check Bypass) */}
-            <div className="p-2.5 bg-zinc-900/40 border border-zinc-800/60 rounded-xl space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-zinc-400 flex items-center gap-1">
-                  <KeyRound className="w-3 h-3 text-amber-400" /> Admin Ground-Check Key
-                </span>
-                <span className="text-[9px] font-mono text-zinc-500">Instant Publish</span>
-              </div>
-              <input
-                type="password"
-                value={adminPasscode}
-                onChange={(e) => setAdminPasscode(e.target.value)}
-                placeholder="Enter passcode if verified on ground (e.g. cbe10)"
-                className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 text-xs rounded-lg px-3 py-1.5 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
-              />
-            </div>
 
             {/* Submit */}
             <button
