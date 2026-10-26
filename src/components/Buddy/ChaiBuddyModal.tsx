@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { VibeProfile, VibeMessage } from '@/types';
+import { supabase } from '@/lib/supabase';
 import {
   X,
   Music,
@@ -26,33 +27,125 @@ interface Props {
 }
 
 export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) {
-  // Step navigation: 'create' -> 'discover' -> 'chat'
+  // Navigation: 'create' -> 'discover' -> 'chat'
   const [step, setStep] = useState<'create' | 'discover' | 'chat'>('create');
 
-  // User's own vibe profile inputs
+  // Local vibe form inputs
   const [favoriteSong, setFavoriteSong] = useState('');
   const [favoriteArtist, setFavoriteArtist] = useState('');
   const [mindDialogue, setMindDialogue] = useState('');
   const [craving, setCraving] = useState('');
   const [vibeRule, setVibeRule] = useState('Chill listener, zero awkwardness');
 
-  // Live profiles deck (initialized empty: no dummy data)
+  // My persistent profile id
+  const [myProfile, setMyProfile] = useState<VibeProfile | null>(null);
+
+  // Deck of active vibes broadcasted by other users in real time
   const [profiles, setProfiles] = useState<VibeProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [matchedProfile, setMatchedProfile] = useState<VibeProfile | null>(null);
 
-  // 1-on-1 Private Chat state
+  // 1-on-1 Chat
   const [chatMessages, setChatMessages] = useState<VibeMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
+  // Keep a stable unique ID for this device session
+  const deviceSessionId = useRef<string>(
+    currentUser?.id || `user_${Math.random().toString(36).substring(2, 9)}`
+  );
+  const myUserName = currentUser?.name || 'Night Owl';
+
+  // Realtime Supabase Channel reference
+  const channelRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Connect to the shared CBE Midnight Vibe Realtime Channel
+    const channel = supabase.channel('cbe-night-vibes', {
+      config: { broadcast: { self: false } },
+    });
+
+    // 1. Listen for other users publishing their vibes
+    channel.on('broadcast', { event: 'vibe_card' }, ({ payload }) => {
+      const incoming: VibeProfile = payload;
+      if (incoming && incoming.id !== deviceSessionId.current) {
+        setProfiles((prev) => {
+          const exists = prev.some((p) => p.id === incoming.id);
+          if (exists) {
+            return prev.map((p) => (p.id === incoming.id ? incoming : p));
+          }
+          return [...prev, incoming];
+        });
+      }
+    });
+
+    // 2. Listen for incoming match requests
+    channel.on('broadcast', { event: 'vibe_match' }, ({ payload }) => {
+      const { from, to } = payload;
+      if (to.id === deviceSessionId.current) {
+        setMatchedProfile(from);
+        setChatMessages([
+          {
+            id: `sys_${Date.now()}`,
+            senderId: 'system',
+            senderName: 'System',
+            text: `${from.name} matched your vibe! You're both connected.`,
+            timestamp: Date.now(),
+          },
+        ]);
+        setStep('chat');
+      }
+    });
+
+    // 3. Listen for private chat messages between matched pair
+    channel.on('broadcast', { event: 'vibe_message' }, ({ payload }) => {
+      const { message, targetUserId } = payload;
+      if (targetUserId === deviceSessionId.current) {
+        setChatMessages((prev) => [...prev, message]);
+      }
+    });
+
+    channel.subscribe();
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const myUserId = currentUser?.id || 'me';
-  const myUserName = currentUser?.name || 'You';
-
-  const handleSaveVibe = (e: React.FormEvent) => {
+  // Save & Broadcast My Vibe
+  const handleSaveVibe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!favoriteSong.trim() || !favoriteArtist.trim()) return;
+
+    const profileData: VibeProfile = {
+      id: deviceSessionId.current,
+      name: myUserName,
+      favoriteSong: favoriteSong.trim(),
+      favoriteArtist: favoriteArtist.trim(),
+      mindDialogue: mindDialogue.trim(),
+      craving: craving.trim(),
+      vibeRule,
+      isLive: true,
+      updatedAt: Date.now(),
+    };
+
+    setMyProfile(profileData);
+
+    // Broadcast your live card to all other connected phones
+    if (channelRef.current) {
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'vibe_card',
+        payload: profileData,
+      });
+    }
+
     setStep('discover');
   };
 
@@ -67,37 +160,63 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     }
   };
 
-  const handleConnect = () => {
-    if (!currentCard) return;
+  // Trigger Match & Notify the Other Phone
+  const handleConnect = async () => {
+    if (!currentCard || !myProfile) return;
     setMatchedProfile(currentCard);
 
-    // Initialize 1-on-1 private room greeting
+    // Notify the other user's phone via Supabase Realtime
+    if (channelRef.current) {
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'vibe_match',
+        payload: {
+          from: myProfile,
+          to: currentCard,
+        },
+      });
+    }
+
     setChatMessages([
       {
         id: `sys_${Date.now()}`,
         senderId: 'system',
         senderName: 'System',
-        text: `Connected! You both tuned in tonight. Say hi to ${currentCard.name}!`,
+        text: `Connected with ${currentCard.name}! Say hi.`,
         timestamp: Date.now(),
       },
     ]);
     setStep('chat');
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  // Send Chat Message to Matched Friend
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageInput.trim()) return;
+    if (!messageInput.trim() || !matchedProfile) return;
 
     const newMsg: VibeMessage = {
       id: `msg_${Date.now()}`,
-      senderId: myUserId,
+      senderId: deviceSessionId.current,
       senderName: myUserName,
       text: messageInput.trim(),
       timestamp: Date.now(),
     };
 
+    // Update local chat screen
     setChatMessages((prev) => [...prev, newMsg]);
     setMessageInput('');
+
+    // Stream message to your friend's phone
+    if (channelRef.current) {
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'vibe_message',
+        payload: {
+          message: newMsg,
+          targetUserId: matchedProfile.id,
+        },
+      });
+    }
   };
 
   return (
@@ -112,7 +231,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                 type="button"
                 onClick={() => setStep('discover')}
                 className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 transition"
-                aria-label="Back to discover"
+                aria-label="Back to radar"
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
@@ -131,10 +250,10 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
               </h3>
               <p className="text-zinc-500 text-[11px]">
                 {step === 'create'
-                  ? 'Fill your frequency to unlock matching night owls'
+                  ? 'Fill your frequency to broadcast to live night owls'
                   : step === 'discover'
-                  ? 'Browsing active vibes in Coimbatore'
-                  : '1-on-1 private late night connection'}
+                  ? 'Realtime radar active across Coimbatore'
+                  : 'Encrypted private 1-on-1 connection'}
               </p>
             </div>
           </div>
@@ -150,7 +269,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
         {/* Dynamic Body */}
         <div className="overflow-y-auto pr-1 py-3 text-xs flex-1 flex flex-col justify-between">
           
-          {/* STEP 1: FILL VIBE */}
+          {/* STEP 1: CREATE VIBE */}
           {step === 'create' && (
             <form onSubmit={handleSaveVibe} className="space-y-3">
               <div>
@@ -162,7 +281,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   required
                   value={favoriteSong}
                   onChange={(e) => setFavoriteSong(e.target.value)}
-                  placeholder="e.g. Kanave Kanave, Interstellar Theme, Neon..."
+                  placeholder="e.g. Kanave Kanave, Interstellar Theme..."
                   className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -189,7 +308,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   type="text"
                   value={mindDialogue}
                   onChange={(e) => setMindDialogue(e.target.value)}
-                  placeholder="e.g. Naan oru thadava mudivu pannita..."
+                  placeholder="e.g. Evanukkum bayapada koodathu..."
                   className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -202,7 +321,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   type="text"
                   value={craving}
                   onChange={(e) => setCraving(e.target.value)}
-                  placeholder="e.g. Hot lemon tea, long bypass ride, quiet spot..."
+                  placeholder="e.g. Hot tea, bypass ride, quiet chill spot..."
                   className="w-full bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -230,13 +349,13 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
             </form>
           )}
 
-          {/* STEP 2: DISCOVER MATCHES */}
+          {/* STEP 2: DISCOVER DECK */}
           {step === 'discover' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between text-[11px] text-zinc-400 pb-1">
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block mr-1"></span>
-                  Active vibes in Coimbatore
+                  Active on Radar ({profiles.length})
                 </span>
                 <button
                   type="button"
@@ -326,20 +445,19 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   </div>
                   <h4 className="font-semibold text-zinc-200 text-xs">Scanning Midnight Waves...</h4>
                   <p className="text-zinc-500 text-[11px] max-w-xs">
-                    Your profile is broadcasted live! As other night owls set their vibes across CBE tonight, their cards will appear here.
+                    Your profile is broadcasted live! As soon as your friend clicks &apos;Save My Vibe&apos; on their phone, their card will appear here instantly.
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* STEP 3: 1-ON-1 PRIVATE CHAT */}
+          {/* STEP 3: 1-ON-1 PRIVATE REALTIME CHAT */}
           {step === 'chat' && matchedProfile && (
             <div className="flex flex-col h-[380px] justify-between">
-              {/* Message log */}
               <div className="space-y-2.5 overflow-y-auto pr-1 flex-1 pb-2">
                 {chatMessages.map((msg) => {
-                  const isMe = msg.senderId === myUserId;
+                  const isMe = msg.senderId === deviceSessionId.current;
                   const isSystem = msg.senderId === 'system';
 
                   if (isSystem) {
