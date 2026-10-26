@@ -57,52 +57,16 @@ const INITIAL_ALERTS: RoadAlert[] = [
   }
 ];
 
-const INITIAL_GHOSTS: GhostUser[] = [
-  {
-    id: 'ghost_1',
-    name: 'Ghost #408',
-    area: 'Peelamedu',
-    lat: 11.0285,
-    lng: 77.0012,
-    college: 'PSG Tech',
-    lastActive: Date.now(),
-  },
-  {
-    id: 'ghost_2',
-    name: 'Ghost #219',
-    area: 'Race Course',
-    lat: 11.0062,
-    lng: 76.9740,
-    college: 'CIT Coimbatore',
-    lastActive: Date.now(),
-  },
-  {
-    id: 'ghost_3',
-    name: 'Ghost #773',
-    area: 'RS Puram',
-    lat: 11.0110,
-    lng: 76.9490,
-    lastActive: Date.now(),
-  },
-  {
-    id: 'ghost_4',
-    name: 'Ghost #902',
-    area: 'Saibaba Colony',
-    lat: 11.0298,
-    lng: 76.9415,
-    college: 'GCT Coimbatore',
-    lastActive: Date.now(),
-  }
-];
+const INITIAL_GHOSTS: GhostUser[] = [];
 
 export default function Home() {
   const { user, logout } = useAuth();
   const ADMIN_EMAILS = ['after10cbeguide@gmail.com']; 
   const isAdmin = Boolean(user?.email && ADMIN_EMAILS.includes(user.email));
 
-  const [spots, setSpots] = useState<Spot[]>(INITIAL_SPOTS);
+  const [spots, setSpots] = useState<Spot[]>([]);
   const [alerts, setAlerts] = useState<RoadAlert[]>(INITIAL_ALERTS);
-  const [ghosts, setGhosts] = useState<GhostUser[]>(INITIAL_GHOSTS);
+  const [ghosts, setGhosts] = useState<GhostUser[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category>('all');
   const [safeHavensOnly, setSafeHavensOnly] = useState<boolean>(false);
   
@@ -160,7 +124,7 @@ export default function Home() {
         }));
         setSpots(formatted);
       } else {
-        setSpots(INITIAL_SPOTS);
+        setSpots([]);
       }
     };
 
