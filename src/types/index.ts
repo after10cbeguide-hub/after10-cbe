@@ -1,57 +1,82 @@
+// 1. Add 'all' to Category
 export type Category = 'all' | 'food' | 'ride_stops' | 'essentials' | 'chill';
+export type SpotCategory = Category;
+
+export type SpotSubtype =
+  | 'Night Tea Stall / Kadai'
+  | '24/7 Bakery & Bakes'
+  | 'Thattukada / Street Fast Food'
+  | 'Midnight Biryani / Mess'
+  | 'Late Night Cafe / Shakes'
+  | 'Drive-in / Roll Stall'
+  | 'Bypass Dhaba / Family Hotel'
+  | 'Restobar / Pub / Lounge'
+  | 'Late Snooker / Turf / Gaming'
+  | 'Highway Petrol Bunk & Air'
+  | '24/7 Pharmacy / ATM'
+  | 'Scenic Lake / Calm Chill Spot';
+
+export type ClosingTimeRange = '12:00 AM' | '02:00 AM' | '04:00 AM' | '24/7';
+export type ShutterRisk = 'uninterrupted' | 'half_shutter_police';
+export type CrowdType = 'College Students' | 'Night Shift / IT' | 'Bikers / Riders' | 'Families / Mixed';
+export type ParkingType = 'bike_only' | 'street_car_parking' | 'car_drive_in';
 
 export type SpotVibeStatus = 'serving' | 'wrapping_up' | 'closed';
-export type CrowdLevel = 'Chill' | 'Packed' | 'Dead';
+export type CrowdLevel = 'Chill' | 'Moderate' | 'Bustling' | 'Packed' | 'Dead';
 
 export interface Spot {
   id: string;
   name: string;
+  landmark?: string;
   area: string;
-  category: Category;
   lat: number;
   lng: number;
+  category: Category;
+  spotType?: SpotSubtype;
+  
   closingTime?: string;
+  closingTimeRange?: ClosingTimeRange;
   isAlwaysOpen?: boolean;
-  isGirlsSafe?: boolean;
-  status?: 'verified' | 'pending';
-  vibes?: string[];
-  vouches?: number;
-  submittedBy?: string;
+  shutterRisk?: ShutterRisk;
+  
+  vibes?: number;
   vibeStatus?: SpotVibeStatus;
   crowdLevel?: CrowdLevel;
+  crowdTypes?: CrowdType[];
+  parking?: ParkingType;
+  
+  isGirlsSafe: boolean;
+  wellLitStreet?: boolean;
+  cctvCovered?: boolean;
+  upiAccepted?: boolean;
+  restroomAvailable?: boolean;
+  
+  mustTryItem?: string;
   lastUpdated?: string;
+  status: 'pending' | 'verified' | 'rejected';
+  vouches?: number;
+  submittedBy?: string;
 }
 
-export type RoadAlertType = 'police' | 'dark_stretch' | 'barricade' | 'hazard';
+// 2. Add 'police' and 'barricade' to RoadAlertType
+export type RoadAlertType = 
+  | 'police' 
+  | 'police_check' 
+  | 'barricade' 
+  | 'waterlogging' 
+  | 'dark_stretch' 
+  | 'hazard';
 
 export interface RoadAlert {
   id: string;
   type: RoadAlertType;
   title: string;
+  description?: string;
   area: string;
   lat: number;
   lng: number;
-  createdAt: number; // Unix timestamp for the 30-min timer
+  createdAt: number;
   upvotes: number;
-}
-
-export interface Confession {
-  id: string;
-  text: string;
-  area: string;
-  upvotes: number;
-  createdAt: string;
-  imageUrl?: string;
-}
-
-export interface UserProfile {
-  id: string;
-  name: string;
-  email: string;
-  avatarUrl?: string;
-  college?: string;
-  isStudentVerified: boolean;
-  role: 'user' | 'admin';
 }
 
 export interface GhostUser {
