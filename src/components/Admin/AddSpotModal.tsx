@@ -17,7 +17,7 @@ import {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  existingSpots: Spot[];
+  existingSpots?: Spot[];
   onAddSpot: (newSpot: Spot) => void;
 }
 
@@ -33,19 +33,7 @@ const CBE_AREAS = [
   'Singanallur',
 ];
 
-function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371e3;
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-export default function AddSpotModal({ isOpen, onClose, existingSpots, onAddSpot }: Props) {
+export default function AddSpotModal({ isOpen, onClose, onAddSpot }: Props) {
   const [name, setName] = useState('');
   const [area, setArea] = useState(CBE_AREAS[0]);
   const [category, setCategory] = useState<'food' | 'ride_stops' | 'essentials' | 'chill'>('food');
@@ -96,16 +84,6 @@ export default function AddSpotModal({ isOpen, onClose, existingSpots, onAddSpot
 
     const finalLat = lat ?? 11.0168;
     const finalLng = lng ?? 76.9558;
-
-    // Proximity duplicate check (30 meters)
-    const tooCloseSpot = existingSpots.find(
-      (s) => getDistanceMeters(finalLat, finalLng, s.lat, s.lng) < 30
-    );
-
-    if (tooCloseSpot) {
-      setErrorMsg(`Spot duplicate detected: "${tooCloseSpot.name}" is already pinned within 30m of this location.`);
-      return;
-    }
 
     // Admin Ground-Check Key verification
     const isAdmin = adminPasscode.trim() === 'cbe10';
