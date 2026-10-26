@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Spot, SpotVibeStatus, CrowdLevel, RoadAlert, RoadAlertType, GhostUser } from '@/types';
@@ -18,6 +18,22 @@ import {
   Check,
   Ghost
 } from 'lucide-react';
+
+// Coimbatore exact outer perimeter border
+const CBE_BORDER_COORDINATES: [number, number][] = [
+  [11.1035, 77.0012], // North (Keeranatham / CHIL SEZ)
+  [11.0895, 76.9660], // North (Ashokapuram / Thudiyalur border)
+  [11.0820, 76.9380], // North-West (Kurudampalayam / Pannimadai border)
+  [11.0360, 76.8920], // North-West (Somayampalayam / Marudhamalai foothills)
+  [10.9855, 76.9030], // West (Perur / Vedapatti lakeside)
+  [10.8920, 76.9420], // South-West (Madukkarai / Seerappalayam)
+  [10.8980, 76.9940], // South (Malumichampatti Junction)
+  [10.9575, 77.0190], // South-East (Vellalur / Chettipalayam Road)
+  [11.0185, 77.0620], // East (Irugur / Ondipudur border)
+  [11.0425, 77.0685], // North-East (Chinniampalayam / Airport)
+  [11.0664, 77.0868], // Far East (Neelambur Bypass Junction)
+  [11.1035, 77.0012], // Loop back to start
+];
 
 const createDynamicMarkerIcon = (vibeStatus: SpotVibeStatus = 'serving') => {
   let color = '#22c55e';
@@ -248,6 +264,17 @@ export default function NightMap({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         className="dark-night-tiles"
       />
+
+      {/* Coimbatore Perimeter with Warm Golden Interior Glow */}
+        <Polygon
+          positions={CBE_BORDER_COORDINATES}
+          pathOptions={{
+            color: '#09090b',       // Deep solid dark border line
+            weight: 3.5,            // Outer boundary thickness
+            fillColor: '#f59e0b',   // Amber / golden glow
+            fillOpacity: 0.12,      // Gentle subtle transparency (adjust between 0.10 - 0.16 to taste)
+          }}
+        />
 
       {/* 1. ACTIVE NIGHT GHOSTS (REAL-TIME SUPABASE PRESENCE RADAR) */}
       {combinedGhosts.map((ghost) => (
