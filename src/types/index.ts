@@ -7,18 +7,17 @@ export interface Spot {
   id: string;
   name: string;
   area: string;
+  category: Category;
   lat: number;
   lng: number;
-  category: 'food' | 'ride_stops' | 'essentials' | 'chill';
   closingTime?: string;
-  isAlwaysOpen: boolean;
-  isGirlsSafe: boolean;
-  isCursed?: boolean;
+  isGirlsSafe?: boolean;
+  status?: 'verified' | 'pending';
+  vibes?: string[];
+  submittedBy?: string;
   vibeStatus?: SpotVibeStatus;
   crowdLevel?: CrowdLevel;
   lastUpdated?: string;
-  status: 'verified' | 'pending';
-  vouches: number;
 }
 
 export type RoadAlertType = 'police' | 'dark_stretch' | 'barricade' | 'hazard';

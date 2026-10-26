@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { INITIAL_SPOTS } from '@/data/seed-spots';
 import { Category, Spot, SpotVibeStatus, CrowdLevel, RoadAlert, GhostUser } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { 
   Utensils, 
   Wrench, 
@@ -13,7 +14,6 @@ import {
   Sparkles, 
   PhoneCall, 
   Ghost, 
-  ShieldCheck, 
   Plus,
   CheckCheck,
   Check,
@@ -22,8 +22,7 @@ import {
   Radar,
   Coffee,
   LogIn,
-  LogOut,
-  GraduationCap
+  LogOut
 } from 'lucide-react';
 import RideRouletteModal from '@/components/Roulette/RideRouletteModal';
 import ConfessionWallModal from '@/components/Confessions/ConfessionWallModal';
@@ -58,7 +57,6 @@ const INITIAL_ALERTS: RoadAlert[] = [
   }
 ];
 
-// Seed active ghost night owls wandering Coimbatore hubs
 const INITIAL_GHOSTS: GhostUser[] = [
   {
     id: 'ghost_1',
@@ -117,9 +115,8 @@ export default function Home() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState<string | undefined>(undefined);
 
-  // Auto-register user's presence as an active ghost when entering the app
+  // Auto-register user's presence as an active ghost
   useEffect(() => {
-    // Generate slight random offset for privacy
     const latOffset = (Math.random() - 0.5) * 0.012;
     const lngOffset = (Math.random() - 0.5) * 0.012;
 
@@ -136,16 +133,51 @@ export default function Home() {
     setGhosts((prev) => [myGhost, ...prev.filter((g) => g.id !== 'my_ghost_presence')]);
   }, [user]);
 
+  // Fetch spots from Supabase & subscribe to live updates
   useEffect(() => {
-    const savedSpots = localStorage.getItem('after10_spots_vibe');
-    if (savedSpots) {
-      try {
-        setSpots(JSON.parse(savedSpots));
-      } catch {
+    const fetchSpots = async () => {
+      const { data, error } = await supabase
+        .from('spots')
+        .select('*');
+
+      if (data && !error) {
+        const formatted: Spot[] = data.map((d: any) => ({
+          id: d.id,
+          name: d.name,
+          area: d.area,
+          category: d.category as Category,
+          lat: d.lat,
+          lng: d.lng,
+          closingTime: d.closing_time,
+          vibes: d.vibes || [],
+          isGirlsSafe: d.is_girls_safe,
+          status: d.status,
+          submittedBy: d.submitted_by,
+          vibeStatus: d.vibe_status || 'open',
+          crowdLevel: d.crowd_level || 'moderate',
+        }));
+        setSpots(formatted);
+      } else {
         setSpots(INITIAL_SPOTS);
       }
-    }
+    };
 
+    fetchSpots();
+
+    const channel = supabase
+      .channel('spots_db_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'spots' }, () => {
+        fetchSpots();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Road Alerts Local Storage Load
+  useEffect(() => {
     const savedAlerts = localStorage.getItem('after10_road_alerts');
     if (savedAlerts) {
       try {
@@ -175,38 +207,66 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  const saveSpots = (newSpots: Spot[]) => {
-    setSpots(newSpots);
-    localStorage.setItem('after10_spots_vibe', JSON.stringify(newSpots));
-  };
-
   const saveAlerts = (newAlerts: RoadAlert[]) => {
     setAlerts(newAlerts);
     localStorage.setItem('after10_road_alerts', JSON.stringify(newAlerts));
   };
 
-  const handleUpdateSpotVibe = (spotId: string, status: SpotVibeStatus, crowd: CrowdLevel) => {
-    const updated = spots.map((s) =>
-      s.id === spotId ? { ...s, vibeStatus: status, crowdLevel: crowd, lastUpdated: 'Just now' } : s
+  // Suggest Spot -> Inserts into Supabase (status: 'pending')
+  const handleAddSpot = async (newSpot: Spot) => {
+    setSpots((prev) => [newSpot, ...prev]);
+
+    await supabase.from('spots').insert({
+      id: newSpot.id,
+      name: newSpot.name,
+      area: newSpot.area,
+      category: newSpot.category,
+      lat: newSpot.lat,
+      lng: newSpot.lng,
+      closing_time: newSpot.closingTime,
+      vibes: newSpot.vibes,
+      is_girls_safe: newSpot.isGirlsSafe,
+      status: 'pending',
+      submitted_by: user?.email || 'Anonymous Owl',
+      vibe_status: 'open',
+      crowd_level: 'moderate',
+    });
+  };
+
+  // Admin Approves Spot -> Updates Supabase (status: 'verified')
+  const handleApproveSpot = async (spotId: string) => {
+    setSpots((prev) =>
+      prev.map((s) => (s.id === spotId ? { ...s, status: 'verified' as const } : s))
     );
-    saveSpots(updated);
+
+    await supabase
+      .from('spots')
+      .update({ status: 'verified' })
+      .eq('id', spotId);
   };
 
-  const handleAddSpot = (newSpot: Spot) => {
-    const updated = [newSpot, ...spots];
-    saveSpots(updated);
+  // Admin Rejects Spot -> Deletes from Supabase
+  const handleRejectSpot = async (spotId: string) => {
+    setSpots((prev) => prev.filter((s) => s.id !== spotId));
+
+    await supabase
+      .from('spots')
+      .delete()
+      .eq('id', spotId);
   };
 
-  const handleApproveSpot = (spotId: string) => {
-    const updated = spots.map((s) =>
-      s.id === spotId ? { ...s, status: 'verified' as const } : s
+  // Live Vibe / Crowd Level Updates
+  const handleUpdateSpotVibe = async (spotId: string, status: SpotVibeStatus, crowd: CrowdLevel) => {
+    setSpots((prev) =>
+      prev.map((s) =>
+        s.id === spotId ? { ...s, vibeStatus: status, crowdLevel: crowd, lastUpdated: 'Just now' } : s
+      )
     );
-    saveSpots(updated);
-  };
 
-  const handleRejectSpot = (spotId: string) => {
-    const updated = spots.filter((s) => s.id !== spotId);
-    saveSpots(updated);
+    await supabase
+      .from('spots')
+      .update({ vibe_status: status, crowd_level: crowd })
+      .eq('id', spotId);
   };
 
   const handlePostAlert = (newAlert: RoadAlert) => {
@@ -327,7 +387,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Category Filter Pills (Horizontal Scroll) */}
+        {/* Category Filter Pills */}
         <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pointer-events-auto px-0.5 py-0.5">
           {categories.map((cat) => {
             const Icon = cat.icon;
@@ -516,4 +576,4 @@ export default function Home() {
       />
     </main>
   );
-  }
+}
