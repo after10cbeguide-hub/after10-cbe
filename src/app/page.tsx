@@ -97,6 +97,8 @@ const INITIAL_GHOSTS: GhostUser[] = [
 
 export default function Home() {
   const { user, logout } = useAuth();
+  const ADMIN_EMAILS = ['after10cbeguide@gmail.com']; 
+  const isAdmin = Boolean(user?.email && ADMIN_EMAILS.includes(user.email));
 
   const [spots, setSpots] = useState<Spot[]>(INITIAL_SPOTS);
   const [alerts, setAlerts] = useState<RoadAlert[]>(INITIAL_ALERTS);
@@ -333,7 +335,7 @@ export default function Home() {
               <span>{ghosts.length} <span className="hidden xs:inline">Awake</span></span>
             </div>
 
-            {pendingSpots.length > 0 && (
+            {isAdmin && pendingSpots.length > 0 && (
               <button
                 onClick={() => setIsAdminQueueOpen(true)}
                 className="flex items-center gap-1 text-[10px] sm:text-[11px] font-mono bg-amber-950/70 text-amber-300 border border-amber-700/60 px-2 py-1 rounded-xl animate-pulse"
@@ -477,7 +479,7 @@ export default function Home() {
       </nav>
 
       {/* Admin Queue Modal */}
-      {isAdminQueueOpen && (
+      {isAdmin && isAdminQueueOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
           <div className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
