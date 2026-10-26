@@ -1,4 +1,3 @@
-// 1. Add 'all' to Category
 export type Category = 'all' | 'food' | 'ride_stops' | 'essentials' | 'chill';
 export type SpotCategory = Category;
 
@@ -58,7 +57,7 @@ export interface Spot {
   submittedBy?: string;
 }
 
-// 2. Add 'police' and 'barricade' to RoadAlertType
+// Road Alerts
 export type RoadAlertType = 
   | 'police' 
   | 'police_check' 
@@ -79,6 +78,7 @@ export interface RoadAlert {
   upvotes: number;
 }
 
+// Ghost Users
 export interface GhostUser {
   id: string;
   name: string;
@@ -87,4 +87,31 @@ export interface GhostUser {
   lng: number;
   college?: string;
   lastActive: number;
+}
+
+// Confession Wall
+export interface Confession {
+  id: string;
+  message?: string;
+  text?: string;
+  content?: string;
+  area?: string;
+  timestamp?: number;
+  createdAt?: number | string;
+  created_at?: string;
+  likes?: number;
+  upvotes: number;
+  color?: string;
+  [key: string]: any;
+}
+
+// User Profile & Auth
+export interface UserProfile {
+  id: string;
+  email?: string;
+  name: string;
+  college?: string;
+  area?: string;
+  avatar?: string;
+  [key: string]: any;
 }
