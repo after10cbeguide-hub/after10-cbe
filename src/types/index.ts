@@ -15,6 +15,7 @@ export interface Spot {
   isGirlsSafe?: boolean;
   status?: 'verified' | 'pending';
   vibes?: string[];
+  vouches?: number;
   submittedBy?: string;
   vibeStatus?: SpotVibeStatus;
   crowdLevel?: CrowdLevel;
