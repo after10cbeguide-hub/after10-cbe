@@ -277,12 +277,12 @@ export default function NightMap({
         />
 
       {/* 1. ACTIVE NIGHT GHOSTS (REAL-TIME SUPABASE PRESENCE RADAR) */}
-      {combinedGhosts.map((ghost) => (
-        <Marker
-          key={ghost.id}
-          position={[ghost.lat, ghost.lng]}
-          icon={createGhostMarkerIcon()}
-        >
+        {Array.from(new Map(combinedGhosts.map((g) => [g.id, g])).values()).map((ghost, idx) => (
+          <Marker
+            key={`${ghost.id}-${idx}`}
+            position={[ghost.lat, ghost.lng]}
+            icon={createGhostMarkerIcon()}
+          >
           <Popup className="custom-popup">
             <div className="bg-zinc-950 text-zinc-100 p-3 rounded-2xl border border-purple-800/80 text-xs max-w-[210px] shadow-2xl space-y-1.5">
               <div className="flex items-center justify-between">

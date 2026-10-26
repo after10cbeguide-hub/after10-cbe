@@ -115,3 +115,37 @@ export interface UserProfile {
   avatar?: string;
   [key: string]: any;
 }
+
+export interface VibeProfile {
+  id: string;
+  name: string;
+  avatar?: string;
+  favoriteSong: string;
+  favoriteArtist: string;
+  mindDialogue: string;
+  craving: string;
+  vibeRule: string;
+  isLive: boolean;
+  connectedWith?: string[];
+  updatedAt: number;
+}
+
+export interface VibeMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface VibeProfile {
+  id: string;
+  name: string;
+  favoriteSong: string;
+  favoriteArtist: string;
+  mindDialogue: string;
+  craving: string;
+  vibeRule: string;
+  isLive: boolean;
+  updatedAt: number;
+}

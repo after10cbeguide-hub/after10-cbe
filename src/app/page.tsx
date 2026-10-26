@@ -532,7 +532,6 @@ export default function Home() {
       <ChaiBuddyModal
         isOpen={isBuddyOpen}
         onClose={() => setIsBuddyOpen(false)}
-        onOpenSOS={() => setIsSafetyOpen(true)}
       />
 
       <AuthModal
