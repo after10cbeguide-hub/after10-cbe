@@ -11,6 +11,7 @@ export interface Spot {
   lat: number;
   lng: number;
   closingTime?: string;
+  isAlwaysOpen?: boolean;
   isGirlsSafe?: boolean;
   status?: 'verified' | 'pending';
   vibes?: string[];
