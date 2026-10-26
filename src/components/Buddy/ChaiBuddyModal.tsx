@@ -16,7 +16,8 @@ import {
   Send,
   Edit3,
   MessageCircle,
-  ArrowLeft
+  ArrowLeft,
+  Loader2
 } from 'lucide-react';
 
 interface Props {
@@ -29,15 +30,18 @@ interface Props {
 export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) {
   // Navigation: 'create' -> 'discover' -> 'chat'
   const [step, setStep] = useState<'create' | 'discover' | 'chat'>('create');
+  
+  // Mandatory 3-second radar scanner state
+  const [isScanning, setIsScanning] = useState(false);
 
-  // Local vibe form inputs
+  // User's own vibe profile inputs
   const [favoriteSong, setFavoriteSong] = useState('');
   const [favoriteArtist, setFavoriteArtist] = useState('');
   const [mindDialogue, setMindDialogue] = useState('');
   const [craving, setCraving] = useState('');
   const [vibeRule, setVibeRule] = useState('Chill listener, zero awkwardness');
 
-  // My persistent profile id
+  // My persistent profile
   const [myProfile, setMyProfile] = useState<VibeProfile | null>(null);
 
   // Deck of active vibes broadcasted by other users in real time
@@ -49,7 +53,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
   const [chatMessages, setChatMessages] = useState<VibeMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
-  // Keep a stable unique ID for this device session
+  // Stable session identifier
   const deviceSessionId = useRef<string>(
     currentUser?.id || `user_${Math.random().toString(36).substring(2, 9)}`
   );
@@ -61,12 +65,11 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
   useEffect(() => {
     if (!isOpen) return;
 
-    // Connect to the shared CBE Midnight Vibe Realtime Channel
     const channel = supabase.channel('cbe-night-vibes', {
       config: { broadcast: { self: false } },
     });
 
-    // 1. Listen for other users publishing their vibes
+    // 1. Collect background cards without changing screens
     channel.on('broadcast', { event: 'vibe_card' }, ({ payload }) => {
       const incoming: VibeProfile = payload;
       if (incoming && incoming.id !== deviceSessionId.current) {
@@ -80,7 +83,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       }
     });
 
-    // 2. Listen for incoming match requests
+    // 2. Incoming match request (only jump to chat if user is already in discover mode)
     channel.on('broadcast', { event: 'vibe_match' }, ({ payload }) => {
       const { from, to } = payload;
       if (to.id === deviceSessionId.current) {
@@ -98,7 +101,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       }
     });
 
-    // 3. Listen for private chat messages between matched pair
+    // 3. 1-on-1 private chat messages
     channel.on('broadcast', { event: 'vibe_message' }, ({ payload }) => {
       const { message, targetUserId } = payload;
       if (targetUserId === deviceSessionId.current) {
@@ -118,7 +121,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
   if (!isOpen) return null;
 
-  // Save & Broadcast My Vibe
+  // Save & Go Live -> Mandatory 3-second search
   const handleSaveVibe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!favoriteSong.trim() || !favoriteArtist.trim()) return;
@@ -137,7 +140,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
     setMyProfile(profileData);
 
-    // Broadcast your live card to all other connected phones
+    // Broadcast your live card to others
     if (channelRef.current) {
       await channelRef.current.send({
         type: 'broadcast',
@@ -146,26 +149,36 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       });
     }
 
+    // Move to discover mode with mandatory 3-second scan
     setStep('discover');
+    setIsScanning(true);
+    setTimeout(() => {
+      setIsScanning(false);
+    }, 3000);
   };
 
   const currentCard = profiles.length > 0 ? profiles[currentIndex] : null;
 
+  // See Next -> Mandatory 3-second search before displaying next card
   const handleNext = () => {
     if (profiles.length === 0) return;
-    if (currentIndex < profiles.length - 1) {
-      setCurrentIndex((prev) => prev + 1);
-    } else {
-      setCurrentIndex(0);
-    }
+
+    setIsScanning(true);
+    setTimeout(() => {
+      if (currentIndex < profiles.length - 1) {
+        setCurrentIndex((prev) => prev + 1);
+      } else {
+        setCurrentIndex(0);
+      }
+      setIsScanning(false);
+    }, 3000);
   };
 
-  // Trigger Match & Notify the Other Phone
+  // Trigger Match
   const handleConnect = async () => {
     if (!currentCard || !myProfile) return;
     setMatchedProfile(currentCard);
 
-    // Notify the other user's phone via Supabase Realtime
     if (channelRef.current) {
       await channelRef.current.send({
         type: 'broadcast',
@@ -189,7 +202,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     setStep('chat');
   };
 
-  // Send Chat Message to Matched Friend
+  // Send Chat Message
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!messageInput.trim() || !matchedProfile) return;
@@ -202,11 +215,9 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       timestamp: Date.now(),
     };
 
-    // Update local chat screen
     setChatMessages((prev) => [...prev, newMsg]);
     setMessageInput('');
 
-    // Stream message to your friend's phone
     if (channelRef.current) {
       await channelRef.current.send({
         type: 'broadcast',
@@ -269,7 +280,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
         {/* Dynamic Body */}
         <div className="overflow-y-auto pr-1 py-3 text-xs flex-1 flex flex-col justify-between">
           
-          {/* STEP 1: CREATE VIBE */}
+          {/* STEP 1: CREATE VIBE FORM */}
           {step === 'create' && (
             <form onSubmit={handleSaveVibe} className="space-y-3">
               <div>
@@ -366,7 +377,22 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                 </button>
               </div>
 
-              {currentCard ? (
+              {/* Mandatory 3-Second Scanning Animation */}
+              {isScanning ? (
+                <div className="h-64 border border-zinc-800/80 rounded-2xl flex flex-col items-center justify-center text-center p-6 space-y-3 bg-zinc-900/30">
+                  <div className="relative flex items-center justify-center">
+                    <span className="absolute w-14 h-14 rounded-full bg-amber-500/10 animate-ping"></span>
+                    <div className="w-12 h-12 rounded-full bg-zinc-900 border border-amber-500/40 flex items-center justify-center">
+                      <Loader2 className="w-6 h-6 text-amber-400 animate-spin" />
+                    </div>
+                  </div>
+                  <h4 className="font-semibold text-zinc-200 text-sm">Matching Midnight Frequencies...</h4>
+                  <p className="text-zinc-500 text-[11px] max-w-xs">
+                    Scanning songs, dialogues, and late-night vibes across Coimbatore...
+                  </p>
+                </div>
+              ) : currentCard ? (
+                /* Card Display */
                 <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
                     <div>
@@ -424,7 +450,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                     <button
                       type="button"
                       onClick={handleNext}
-                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-medium text-xs transition"
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-medium text-xs transition active:scale-95"
                     >
                       See Next <ArrowRight className="w-3.5 h-3.5" />
                     </button>
@@ -445,14 +471,14 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   </div>
                   <h4 className="font-semibold text-zinc-200 text-xs">Scanning Midnight Waves...</h4>
                   <p className="text-zinc-500 text-[11px] max-w-xs">
-                    Your profile is broadcasted live! As soon as your friend clicks &apos;Save My Vibe&apos; on their phone, their card will appear here instantly.
+                    Your profile is broadcasted live! As soon as your friend clicks &apos;Save My Vibe&apos; on their phone, their card will appear here.
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* STEP 3: 1-ON-1 PRIVATE REALTIME CHAT */}
+          {/* STEP 3: 1-ON-1 PRIVATE CHAT */}
           {step === 'chat' && matchedProfile && (
             <div className="flex flex-col h-[380px] justify-between">
               <div className="space-y-2.5 overflow-y-auto pr-1 flex-1 pb-2">
