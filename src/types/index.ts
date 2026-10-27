@@ -149,3 +149,22 @@ export interface VibeProfile {
   isLive: boolean;
   updatedAt: number;
 }
+
+export type TurfSport = 'Box Cricket' | 'Football 5v5' | 'Badminton' | 'Pickleball';
+
+export interface TurfVenue {
+  id: string;
+  name: string;
+  area: string;
+  address?: string;
+  lat: number;
+  lng: number;
+  sports: TurfSport[];
+  nightTimings: string; // e.g., "Open 24 Hours", "Till 3:00 AM"
+  pricePerHourNight?: string; // e.g., "₹800 - ₹1,200 / hr"
+  phone: string;
+  whatsapp: string;
+  googleMapsUrl?: string;
+  status: 'pending' | 'verified';
+  submittedBy?: string;
+}

@@ -6,6 +6,9 @@ import { INITIAL_SPOTS } from '@/data/seed-spots';
 import { Category, Spot, SpotVibeStatus, CrowdLevel, RoadAlert, GhostUser } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { Trophy } from 'lucide-react';
+import TurfModal from '@/components/Turf/TurfModal';
+import { TurfVenue } from '@/types';
 import { 
   Utensils, 
   Wrench, 
@@ -69,6 +72,22 @@ export default function Home() {
   const [ghosts, setGhosts] = useState<GhostUser[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category>('all');
   const [safeHavensOnly, setSafeHavensOnly] = useState<boolean>(false);
+
+  const [isTurfOpen, setIsTurfOpen] = useState(false);
+  const [turfs, setTurfs] = useState<TurfVenue[]>([]);
+const handleAddTurf = (newTurf: TurfVenue) => {
+    setTurfs((prev) => [newTurf, ...prev]);
+  };
+
+  const handleApproveTurf = (id: string) => {
+    setTurfs((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, status: 'verified' } : t))
+    );
+  };
+
+  const handleRejectTurf = (id: string) => {
+    setTurfs((prev) => prev.filter((t) => t.id !== id));
+  };
   
   // Modals
   const [isRouletteOpen, setIsRouletteOpen] = useState(false);
@@ -392,6 +411,20 @@ export default function Home() {
         />
       </div>
 
+     {/* FLOATING ACTION BUTTON: MIDNIGHT TURFS (POSITIONED ABOVE ROULETTE DOCK) */}
+      <div className="absolute bottom-20 left-4 z-30 pointer-events-auto">
+        <button
+          onClick={() => setIsTurfOpen(true)}
+          className="w-11 h-11 rounded-2xl bg-zinc-900/95 hover:bg-zinc-800 border border-zinc-700/80 text-emerald-400 shadow-xl backdrop-blur-md flex items-center justify-center transition active:scale-95 group relative"
+          aria-label="Midnight Turfs"
+        >
+          <Trophy className="w-5 h-5 group-hover:scale-110 transition-transform" />
+          <span className="absolute left-14 bg-zinc-900/95 border border-zinc-800 text-zinc-200 text-[10px] font-semibold px-2 py-1 rounded-lg opacity-0 pointer-events-none group-hover:opacity-100 transition whitespace-nowrap shadow-lg">
+            Midnight Turfs
+          </span>
+        </button>
+      </div>
+
       {/* Bottom Floating Navigation Action Dock */}
       <nav className="absolute bottom-3 sm:bottom-6 left-3 sm:left-4 right-3 sm:right-4 z-20 pointer-events-none">
         <div className="max-w-md mx-auto bg-zinc-950/95 sm:bg-zinc-900/95 backdrop-blur-xl border border-zinc-800/80 p-1.5 rounded-2xl shadow-2xl flex items-center justify-between gap-1 pointer-events-auto">
@@ -539,6 +572,17 @@ export default function Home() {
         onClose={() => setIsAuthOpen(false)}
         reason={authReason}
       />
+
+      <TurfModal
+        isOpen={isTurfOpen}
+        onClose={() => setIsTurfOpen(false)}
+        turfs={turfs}
+        onAddTurf={handleAddTurf}
+        isAdmin={isAdmin}
+        onApproveTurf={handleApproveTurf}
+        onRejectTurf={handleRejectTurf}
+      />
+
     </main>
   );
 }
