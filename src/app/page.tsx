@@ -79,14 +79,16 @@ const handleAddTurf = (newTurf: TurfVenue) => {
     setTurfs((prev) => [newTurf, ...prev]);
   };
 
-  const handleApproveTurf = (id: string) => {
+  const handleApproveTurf = async (id: string) => {
     setTurfs((prev) =>
       prev.map((t) => (t.id === id ? { ...t, status: 'verified' } : t))
     );
+    await supabase.from('turfs').update({ status: 'verified' }).eq('id', id);
   };
 
-  const handleRejectTurf = (id: string) => {
+  const handleRejectTurf = async (id: string) => {
     setTurfs((prev) => prev.filter((t) => t.id !== id));
+    await supabase.from('turfs').delete().eq('id', id);
   };
   
   // Modals
@@ -119,7 +121,7 @@ const handleAddTurf = (newTurf: TurfVenue) => {
   }, [user]);
 
   // Fetch spots from Supabase & subscribe to live updates
-  useEffect(() => {
+ useEffect(() => {
     const fetchSpots = async () => {
       const { data, error } = await supabase
         .from('spots')
@@ -147,12 +149,37 @@ const handleAddTurf = (newTurf: TurfVenue) => {
       }
     };
 
+    const fetchTurfs = async () => {
+      const { data, error } = await supabase.from('turfs').select('*');
+      if (data && !error) {
+        const loadedTurfs: TurfVenue[] = data.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          area: t.area,
+          address: t.address,
+          lat: t.lat,
+          lng: t.lng,
+          sports: t.sports,
+          nightTimings: t.night_timings,
+          pricePerHourNight: t.price_per_hour_night,
+          phone: t.phone,
+          whatsapp: t.whatsapp,
+          status: t.status,
+        }));
+        setTurfs(loadedTurfs);
+      }
+    };
+
     fetchSpots();
+    fetchTurfs();
 
     const channel = supabase
       .channel('spots_db_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'spots' }, () => {
         fetchSpots();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turfs' }, () => {
+        fetchTurfs();
       })
       .subscribe();
 

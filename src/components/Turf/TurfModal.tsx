@@ -1,5 +1,7 @@
 'use client';
 
+import { supabase } from '@/lib/supabase';
+
 import { useState } from 'react';
 import { TurfVenue, TurfSport } from '@/types';
 import {
@@ -79,7 +81,7 @@ export default function TurfModal({
     );
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !phone.trim()) return;
 
@@ -100,9 +102,32 @@ export default function TurfModal({
       pricePerHourNight: pricePerHour.trim() || undefined,
       phone: phone.trim(),
       whatsapp: cleanWa,
-      status: isAdmin ? 'verified' : 'pending', // Admins bypass moderation
+      status: isAdmin ? 'verified' : 'pending',
     };
 
+    // 1. Insert directly into Supabase cloud table
+    const { error } = await supabase.from('turfs').insert([
+      {
+        id: newVenue.id,
+        name: newVenue.name,
+        area: newVenue.area,
+        address: newVenue.address,
+        lat: newVenue.lat,
+        lng: newVenue.lng,
+        sports: newVenue.sports,
+        night_timings: newVenue.nightTimings,
+        price_per_hour_night: newVenue.pricePerHourNight,
+        phone: newVenue.phone,
+        whatsapp: newVenue.whatsapp,
+        status: newVenue.status,
+      },
+    ]);
+
+    if (error) {
+      console.error('Error saving turf to Supabase:', error);
+    }
+
+    // 2. Update local state
     onAddTurf(newVenue);
     setIsSuccess(true);
 
@@ -117,6 +142,7 @@ export default function TurfModal({
     }, 2000);
   };
 
+  
   const pendingTurfs = turfs.filter((t) => t.status === 'pending');
   const verifiedTurfs = turfs.filter((t) => t.status === 'verified');
 
