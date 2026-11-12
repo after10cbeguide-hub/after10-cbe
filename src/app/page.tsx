@@ -34,6 +34,8 @@ import AddSpotModal from '@/components/Admin/AddSpotModal';
 import RoadAlertModal from '@/components/Radar/RoadAlertModal';
 import ChaiBuddyModal from '@/components/Buddy/ChaiBuddyModal';
 import AuthModal from '@/components/Auth/AuthModal';
+import NearbyRadarModal from '@/components/Buddy/NearbyRadarModal';
+import { Music } from 'lucide-react'; // or add Music to your existing lucide-react import
 
 const NightMap = dynamic(() => import('@/components/Map/NightMap'), {
   ssr: false,
@@ -99,6 +101,7 @@ const handleAddTurf = (newTurf: TurfVenue) => {
   const [isAdminQueueOpen, setIsAdminQueueOpen] = useState(false);
   const [isRadarOpen, setIsRadarOpen] = useState(false);
   const [isBuddyOpen, setIsBuddyOpen] = useState(false);
+  const [buddyMode, setBuddyMode] = useState<'menu' | 'music' | 'nearby'>('menu');
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState<string | undefined>(undefined);
 
@@ -482,7 +485,12 @@ const handleAddTurf = (newTurf: TurfVenue) => {
 
           {/* Chai Buddy */}
           <button
-            onClick={() => requireAuthForAction('Verify your identity with Google to enter Chai Buddy', () => setIsBuddyOpen(true))}
+            onClick={() =>
+              requireAuthForAction('Verify your identity with Google to enter Chai Buddy', () => {
+                setBuddyMode('menu');
+                setIsBuddyOpen(true);
+              })
+            }
             className="flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 active:scale-95 transition"
           >
             <Coffee className="w-4 h-4 mb-0.5" />
@@ -605,9 +613,74 @@ const handleAddTurf = (newTurf: TurfVenue) => {
         onPostAlert={handlePostAlert}
       />
 
+      {/* BUDDY 2-OPTION PICKER */}
+      {isBuddyOpen && buddyMode === 'menu' && (
+        <div
+          onClick={() => setIsBuddyOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-3"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+              <div>
+                <h3 className="font-bold text-zinc-100 text-sm">Midnight Buddy Finder</h3>
+                <p className="text-zinc-500 text-[11px]">Choose how you want to connect tonight</p>
+              </div>
+              <button
+                onClick={() => setIsBuddyOpen(false)}
+                className="text-zinc-400 hover:text-zinc-100 p-1 rounded-xl"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <button
+              onClick={() => setBuddyMode('music')}
+              className="w-full text-left p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-amber-500/50 transition flex items-start gap-3"
+            >
+              <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                <Music className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-amber-400">City-Wide Frequency</span>
+                <h4 className="font-bold text-zinc-100 text-sm">Music &amp; Vibe Match</h4>
+                <p className="text-zinc-400 text-[11px] mt-0.5">Match by song loop, artist &amp; cravings.</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setBuddyMode('nearby')}
+              className="w-full text-left p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 transition flex items-start gap-3"
+            >
+              <div className="p-2.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <Radar className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-emerald-400">50m Live GPS Radar</span>
+                <h4 className="font-bold text-zinc-100 text-sm">Find Nearby (50m Radius)</h4>
+                <p className="text-zinc-400 text-[11px] mt-0.5">Scan active owls within 50m &amp; request private chat.</p>
+              </div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* OPTION 1: MUSIC MATCH MODAL */}
       <ChaiBuddyModal
-        isOpen={isBuddyOpen}
+        isOpen={isBuddyOpen && buddyMode === 'music'}
         onClose={() => setIsBuddyOpen(false)}
+        onBackToMenu={() => setBuddyMode('menu')}
+        currentUser={user}
+      />
+
+      {/* OPTION 2: 50M NEARBY RADAR MODAL */}
+      <NearbyRadarModal
+        isOpen={isBuddyOpen && buddyMode === 'nearby'}
+        onClose={() => setIsBuddyOpen(false)}
+        onBackToMenu={() => setBuddyMode('menu')}
+        currentUser={user}
       />
 
       <AuthModal

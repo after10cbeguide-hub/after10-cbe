@@ -17,114 +17,41 @@ import {
   Edit3,
   MessageCircle,
   ArrowLeft,
-  Loader2,
-  Radar,
-  MapPin,
-  UserPlus,
-  Check,
-  ShieldAlert
+  Loader2
 } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  onBackToMenu?: () => void;
   onOpenSOS?: () => void;
   currentUser?: { id?: string; name?: string; email?: string } | null;
 }
 
-interface NearbyUser {
-  id: string;
-  name: string;
-  lat: number;
-  lng: number;
-  distanceMeters: number;
-  angleDeg: number;
-  updatedAt: number;
-}
-
-// Haversine formula to compute exact distance in meters between two GPS points
-function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371e3; // Earth radius in meters
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return Math.round(R * c);
-}
-
-// Compute bearing angle (0-360) for plotting blips on the radar
-function getBearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const toDeg = (rad: number) => (rad * 180) / Math.PI;
-  const dLon = toRad(lon2 - lon1);
-  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
-  const x =
-    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
-  return (toDeg(Math.atan2(y, x)) + 360) % 360;
-}
-
-export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) {
-  // Top-level mode: 'select' (2 options) -> 'music' | 'nearby'
-  const [mode, setMode] = useState<'select' | 'music' | 'nearby'>('select');
-
-  // Navigation inside Music Match & Shared Chat: 'create' -> 'discover' -> 'chat'
+export default function ChaiBuddyModal({ isOpen, onClose, onBackToMenu, currentUser }: Props) {
   const [step, setStep] = useState<'create' | 'discover' | 'chat'>('create');
-
-  // Mandatory 3-second radar scanner state
   const [isScanning, setIsScanning] = useState(false);
 
-  // User's own vibe profile inputs (Music Match)
   const [favoriteSong, setFavoriteSong] = useState('');
   const [favoriteArtist, setFavoriteArtist] = useState('');
   const [mindDialogue, setMindDialogue] = useState('');
   const [craving, setCraving] = useState('');
   const [vibeRule, setVibeRule] = useState('Chill listener, zero awkwardness');
-  const [myProfile, setMyProfile] = useState<VibeProfile | null>(null);
 
-  // Music Match Deck
+  const [myProfile, setMyProfile] = useState<VibeProfile | null>(null);
   const [profiles, setProfiles] = useState<VibeProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [matchedProfile, setMatchedProfile] = useState<VibeProfile | null>(null);
 
-  // Shared 1-on-1 Chat Partner (works for both Music Match & 50m Nearby)
-  const [chatPartner, setChatPartner] = useState<{ id: string; name: string; source: 'music' | 'nearby' } | null>(null);
   const [chatMessages, setChatMessages] = useState<VibeMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
-  // Nearby 50m Radar States
-  const [myCoords, setMyCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [gpsError, setGpsError] = useState<string | null>(null);
-  const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([]);
-  const [selectedNearbyUser, setSelectedNearbyUser] = useState<NearbyUser | null>(null);
-  const [outgoingRequestTo, setOutgoingRequestTo] = useState<string | null>(null);
-  const [incomingNearbyRequest, setIncomingNearbyRequest] = useState<{ id: string; name: string } | null>(null);
-
-  // Stable session identifier
   const deviceSessionId = useRef<string>(
     currentUser?.id || `user_${Math.random().toString(36).substring(2, 9)}`
   );
-  const myUserName = currentUser?.name || `Owl #${deviceSessionId.current.slice(-3).toUpperCase()}`;
-
-  // Realtime Supabase Channel references
+  const myUserName = currentUser?.name || 'Night Owl';
   const channelRef = useRef<any>(null);
-  const nearbyChannelRef = useRef<any>(null);
 
-  // Reset to Mode Selection whenever modal opens fresh
-  useEffect(() => {
-    if (isOpen) {
-      setMode('select');
-      setStep('create');
-      setChatPartner(null);
-      setSelectedNearbyUser(null);
-      setOutgoingRequestTo(null);
-      setIncomingNearbyRequest(null);
-    }
-  }, [isOpen]);
-
-  // 1. Music Match + Private Chat Channel
   useEffect(() => {
     if (!isOpen) return;
 
@@ -145,17 +72,16 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     channel.on('broadcast', { event: 'vibe_match' }, ({ payload }) => {
       const { from, to } = payload;
       if (to.id === deviceSessionId.current) {
-        setChatPartner({ id: from.id, name: from.name, source: 'music' });
+        setMatchedProfile(from);
         setChatMessages([
           {
             id: `sys_${Date.now()}`,
             senderId: 'system',
             senderName: 'System',
-            text: `${from.name} matched your music vibe! You're both connected.`,
+            text: `${from.name} matched your vibe! You're both connected.`,
             timestamp: Date.now(),
           },
         ]);
-        setMode('music');
         setStep('chat');
       }
     });
@@ -177,207 +103,8 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     };
   }, [isOpen]);
 
-  // 2. Nearby 50-Meter GPS Radar (Presence + Broadcast fallback for instant lock)
-  useEffect(() => {
-    if (!isOpen || mode !== 'nearby') return;
-
-    setGpsError(null);
-    let watchId: number | null = null;
-    const latestCoordsRef = { lat: 0, lng: 0, ready: false };
-    const peerCoordsMap = new Map<string, { name: string; lat: number; lng: number; updatedAt: number }>();
-
-    if (!('geolocation' in navigator)) {
-      setGpsError('GPS is not supported on this browser.');
-      return;
-    }
-
-    const rebuildNearbyList = () => {
-      if (!latestCoordsRef.ready) return;
-      const detected: NearbyUser[] = [];
-
-      peerCoordsMap.forEach((peer, key) => {
-        if (key === deviceSessionId.current) return;
-        // Ignore stale pings older than 2 minutes
-        if (Date.now() - peer.updatedAt > 120000) return;
-
-        const rawDist = getDistanceMeters(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng);
-        // Allow up to 150m raw GPS drift for indoor testing while displaying clamped 0-50m radar range
-        if (rawDist <= 150) {
-          detected.push({
-            id: key,
-            name: peer.name,
-            lat: peer.lat,
-            lng: peer.lng,
-            distanceMeters: Math.min(50, rawDist),
-            angleDeg: getBearingDeg(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng),
-            updatedAt: peer.updatedAt,
-          });
-        }
-      });
-
-      setNearbyUsers(detected);
-    };
-
-    const nearbyChannel = supabase.channel('cbe-nearby-50m', {
-      config: {
-        presence: { key: deviceSessionId.current },
-        broadcast: { self: false },
-      },
-    });
-
-    nearbyChannel
-      .on('presence', { event: 'sync' }, () => {
-        const state = nearbyChannel.presenceState();
-        Object.entries(state).forEach(([key, presences]) => {
-          if (key === deviceSessionId.current) return;
-          const latest: any = Array.isArray(presences) ? presences[presences.length - 1] : null;
-          if (latest && typeof latest.lat === 'number') {
-            peerCoordsMap.set(key, {
-              name: latest.name || 'Night Owl',
-              lat: latest.lat,
-              lng: latest.lng,
-              updatedAt: latest.updatedAt || Date.now(),
-            });
-          }
-        });
-        rebuildNearbyList();
-      })
-      .on('broadcast', { event: 'nearby_ping' }, ({ payload }) => {
-        if (!payload || payload.id === deviceSessionId.current) return;
-        peerCoordsMap.set(payload.id, {
-          name: payload.name || 'Night Owl',
-          lat: payload.lat,
-          lng: payload.lng,
-          updatedAt: Date.now(),
-        });
-        rebuildNearbyList();
-
-        // Reply with our own coordinates if we have a lock
-        if (latestCoordsRef.ready) {
-          nearbyChannel.send({
-            type: 'broadcast',
-            event: 'nearby_ping_ack',
-            payload: {
-              id: deviceSessionId.current,
-              name: myUserName,
-              lat: latestCoordsRef.lat,
-              lng: latestCoordsRef.lng,
-            },
-          });
-        }
-      })
-      .on('broadcast', { event: 'nearby_ping_ack' }, ({ payload }) => {
-        if (!payload || payload.id === deviceSessionId.current) return;
-        peerCoordsMap.set(payload.id, {
-          name: payload.name || 'Night Owl',
-          lat: payload.lat,
-          lng: payload.lng,
-          updatedAt: Date.now(),
-        });
-        rebuildNearbyList();
-      })
-      .on('broadcast', { event: 'nearby_chat_request' }, ({ payload }) => {
-        const { fromId, fromName, toId } = payload;
-        if (toId === deviceSessionId.current) {
-          setIncomingNearbyRequest({ id: fromId, name: fromName });
-        }
-      })
-      .on('broadcast', { event: 'nearby_chat_accept' }, ({ payload }) => {
-        const { fromId, fromName, toId } = payload;
-        if (toId === deviceSessionId.current) {
-          setOutgoingRequestTo(null);
-          setChatPartner({ id: fromId, name: fromName, source: 'nearby' });
-          setChatMessages([
-            {
-              id: `sys_${Date.now()}`,
-              senderId: 'system',
-              senderName: 'System',
-              text: `${fromName} accepted your 50m radar request! Say hi.`,
-              timestamp: Date.now(),
-            },
-          ]);
-          setStep('chat');
-        }
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          const handlePosition = async (pos: GeolocationPosition) => {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-            latestCoordsRef.lat = lat;
-            latestCoordsRef.lng = lng;
-            latestCoordsRef.ready = true;
-            setMyCoords({ lat, lng });
-            setGpsError(null);
-
-            await nearbyChannel.track({
-              name: myUserName,
-              lat,
-              lng,
-              updatedAt: Date.now(),
-            });
-
-            await nearbyChannel.send({
-              type: 'broadcast',
-              event: 'nearby_ping',
-              payload: {
-                id: deviceSessionId.current,
-                name: myUserName,
-                lat,
-                lng,
-              },
-            });
-
-            rebuildNearbyList();
-          };
-
-          // Fast initial fix (allows Wi-Fi/cell triangulation immediately), followed by high-accuracy watch
-          navigator.geolocation.getCurrentPosition(handlePosition, () => {}, {
-            enableHighAccuracy: false,
-            timeout: 5000,
-            maximumAge: 30000,
-          });
-
-          watchId = navigator.geolocation.watchPosition(
-            handlePosition,
-            (err) => {
-              if (!latestCoordsRef.ready) {
-                setGpsError(
-                  err.code === 1
-                    ? 'Location permission denied. Allow GPS access in browser settings.'
-                    : 'Waiting for GPS signal... Turn on Location/GPS on your phone.'
-                );
-              }
-            },
-            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-          );
-        }
-      });
-
-    nearbyChannelRef.current = nearbyChannel;
-
-    return () => {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      if (nearbyChannelRef.current) {
-        supabase.removeChannel(nearbyChannelRef.current);
-      }
-    };
-  }, [isOpen, mode, myUserName]);
-
-  // Clean close handler so modal always exits cleanly back to homescreen
-  const handleCloseModal = () => {
-    setMode('select');
-    setStep('create');
-    setChatPartner(null);
-    setSelectedNearbyUser(null);
-    setOutgoingRequestTo(null);
-    setIncomingNearbyRequest(null);
-    onClose();
-  };
-
   if (!isOpen) return null;
 
-  // Music Match: Save & Go Live -> Mandatory 3-second search
   const handleSaveVibe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!favoriteSong.trim() || !favoriteArtist.trim()) return;
@@ -415,16 +142,21 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
   const handleNext = () => {
     if (profiles.length === 0) return;
+
     setIsScanning(true);
     setTimeout(() => {
-      setCurrentIndex((prev) => (prev < profiles.length - 1 ? prev + 1 : 0));
+      if (currentIndex < profiles.length - 1) {
+        setCurrentIndex((prev) => prev + 1);
+      } else {
+        setCurrentIndex(0);
+      }
       setIsScanning(false);
     }, 3000);
   };
 
-  const handleConnectMusic = async () => {
+  const handleConnect = async () => {
     if (!currentCard || !myProfile) return;
-    setChatPartner({ id: currentCard.id, name: currentCard.name, source: 'music' });
+    setMatchedProfile(currentCard);
 
     if (channelRef.current) {
       await channelRef.current.send({
@@ -449,57 +181,9 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     setStep('chat');
   };
 
-  // Nearby 50m: Send Chat Request
-  const handleSendNearbyRequest = async (target: NearbyUser) => {
-    setOutgoingRequestTo(target.id);
-    if (nearbyChannelRef.current) {
-      await nearbyChannelRef.current.send({
-        type: 'broadcast',
-        event: 'nearby_chat_request',
-        payload: {
-          fromId: deviceSessionId.current,
-          fromName: myUserName,
-          toId: target.id,
-        },
-      });
-    }
-  };
-
-  // Nearby 50m: Accept Incoming Request
-  const handleAcceptNearbyRequest = async () => {
-    if (!incomingNearbyRequest) return;
-    const partner = incomingNearbyRequest;
-    setIncomingNearbyRequest(null);
-
-    if (nearbyChannelRef.current) {
-      await nearbyChannelRef.current.send({
-        type: 'broadcast',
-        event: 'nearby_chat_accept',
-        payload: {
-          fromId: deviceSessionId.current,
-          fromName: myUserName,
-          toId: partner.id,
-        },
-      });
-    }
-
-    setChatPartner({ id: partner.id, name: partner.name, source: 'nearby' });
-    setChatMessages([
-      {
-        id: `sys_${Date.now()}`,
-        senderId: 'system',
-        senderName: 'System',
-        text: `Connected with ${partner.name} (within 50m)! Say hi.`,
-        timestamp: Date.now(),
-      },
-    ]);
-    setStep('chat');
-  };
-
-  // Send 1-on-1 Chat Message (shared for both modes)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageInput.trim() || !chatPartner) return;
+    if (!messageInput.trim() || !matchedProfile) return;
 
     const newMsg: VibeMessage = {
       id: `msg_${Date.now()}`,
@@ -518,39 +202,28 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
         event: 'vibe_message',
         payload: {
           message: newMsg,
-          targetUserId: chatPartner.id,
+          targetUserId: matchedProfile.id,
         },
       });
     }
   };
 
-  const handleBackNavigation = () => {
-    if (step === 'chat') {
-      setChatPartner(null);
-      setStep(mode === 'music' ? 'discover' : 'create');
-    } else {
-      setMode('select');
-      setStep('create');
-    }
-  };
-
   return (
     <div
-      onClick={handleCloseModal}
+      onClick={onClose}
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden"
       >
-        
         {/* Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-zinc-800/80 shrink-0">
           <div className="flex items-center gap-2.5">
-            {(mode !== 'select' || step === 'chat') && (
+            {(step === 'chat' || onBackToMenu) && (
               <button
                 type="button"
-                onClick={handleBackNavigation}
+                onClick={() => (step === 'chat' ? setStep('discover') : onBackToMenu?.())}
                 className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 transition"
                 aria-label="Back"
               >
@@ -558,43 +231,29 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
               </button>
             )}
             <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
-              {step === 'chat' ? (
-                <MessageCircle className="w-4 h-4" />
-              ) : mode === 'nearby' ? (
-                <Radar className="w-4 h-4 text-emerald-400 animate-spin" />
-              ) : (
-                <Radio className="w-4 h-4 animate-pulse" />
-              )}
+              {step === 'chat' ? <MessageCircle className="w-4 h-4" /> : <Radio className="w-4 h-4 animate-pulse" />}
             </div>
             <div>
               <h3 className="font-bold text-zinc-100 text-sm sm:text-base flex items-center gap-1.5">
-                {step === 'chat'
-                  ? `Chat with ${chatPartner?.name || 'Buddy'}`
-                  : mode === 'select'
-                  ? 'Midnight Buddy Finder'
-                  : mode === 'nearby'
-                  ? '50m Proximity Radar'
-                  : step === 'create'
-                  ? 'Music & Vibe Match'
-                  : 'Live Frequency Radar'}
+                {step === 'create'
+                  ? 'Set Your Midnight Vibe'
+                  : step === 'discover'
+                  ? 'Live Vibe Radar'
+                  : `Chat with ${matchedProfile?.name || 'Buddy'}`}
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               </h3>
               <p className="text-zinc-500 text-[11px]">
-                {step === 'chat'
-                  ? 'Encrypted private 1-on-1 connection'
-                  : mode === 'select'
-                  ? 'Choose how you want to connect tonight'
-                  : mode === 'nearby'
-                  ? 'Scanning active night owls within 50 meters'
-                  : step === 'create'
-                  ? 'Match by song loop, artist & midnight mood'
-                  : 'Realtime frequency match across Coimbatore'}
+                {step === 'create'
+                  ? 'Fill your frequency to broadcast to live night owls'
+                  : step === 'discover'
+                  ? 'Realtime radar active across Coimbatore'
+                  : 'Encrypted private 1-on-1 connection'}
               </p>
             </div>
           </div>
           <button
             type="button"
-            onClick={handleCloseModal}
+            onClick={onClose}
             aria-label="Close modal"
             className="text-zinc-400 hover:text-zinc-100 p-1.5 rounded-xl hover:bg-zinc-900 transition"
           >
@@ -604,73 +263,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
         {/* Dynamic Body */}
         <div className="overflow-y-auto pr-1 py-3 text-xs flex-1 flex flex-col justify-between">
-
-          {/* MODE 0: TWO-OPTION LANDING SELECTOR */}
-          {mode === 'select' && step !== 'chat' && (
-            <div className="space-y-3 py-2">
-              {/* Option 1: Music Match */}
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('music');
-                  setStep('create');
-                }}
-                className="w-full text-left p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-amber-500/50 transition group relative overflow-hidden active:scale-[0.99]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div className="p-3 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0 group-hover:scale-105 transition-transform">
-                      <Music className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                        City-Wide Frequency
-                      </span>
-                      <h4 className="font-bold text-zinc-100 text-sm mt-0.5">Music &amp; Vibe Match</h4>
-                      <p className="text-zinc-400 text-[11px] mt-1 leading-relaxed">
-                        Broadcast the song on your loop, your favorite artist, and midnight cravings to pair with someone on the same wavelength.
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-zinc-500 group-hover:text-amber-400 group-hover:translate-x-0.5 transition shrink-0 mt-1" />
-                </div>
-              </button>
-
-              {/* Option 2: Find Nearby (50m Radar) */}
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('nearby');
-                  setStep('create');
-                }}
-                className="w-full text-left p-4 rounded-2xl bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-emerald-500/50 transition group relative overflow-hidden active:scale-[0.99]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div className="p-3 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0 group-hover:scale-105 transition-transform">
-                      <Radar className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                          50m Live GPS Radar
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-zinc-100 text-sm mt-0.5">Find Nearby (50m Radius)</h4>
-                      <p className="text-zinc-400 text-[11px] mt-1 leading-relaxed">
-                        Scan your immediate 50-meter surroundings at a chai kadai or turf. Tap a radar blip to send a private chat request.
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-zinc-500 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition shrink-0 mt-1" />
-                </div>
-              </button>
-            </div>
-          )}
-
-          {/* MODE 1: MUSIC MATCH (STEP 1 - CREATE VIBE FORM) */}
-          {mode === 'music' && step === 'create' && (
+          {step === 'create' && (
             <form onSubmit={handleSaveVibe} className="space-y-3">
               <div>
                 <label className="text-zinc-300 mb-1 flex items-center gap-1.5 font-medium">
@@ -749,8 +342,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
             </form>
           )}
 
-          {/* MODE 1: MUSIC MATCH (STEP 2 - DISCOVER DECK) */}
-          {mode === 'music' && step === 'discover' && (
+          {step === 'discover' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between text-[11px] text-zinc-400 pb-1">
                 <span className="flex items-center gap-1">
@@ -844,7 +436,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
                     <button
                       type="button"
-                      onClick={handleConnectMusic}
+                      onClick={handleConnect}
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs transition shadow-md shadow-amber-950/20 active:scale-95"
                     >
                       <Heart className="w-3.5 h-3.5 fill-current" /> Vibe Match!
@@ -858,187 +450,14 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                   </div>
                   <h4 className="font-semibold text-zinc-200 text-xs">Scanning Midnight Waves...</h4>
                   <p className="text-zinc-500 text-[11px] max-w-xs">
-                    Your profile is broadcasted live! As soon as another user clicks &apos;Save My Vibe&apos;, their card will appear here.
+                    Your profile is broadcasted live! As soon as your friend clicks &apos;Save My Vibe&apos; on their phone, their card will appear here.
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* MODE 2: FIND NEARBY (50-METER RADIUS RADAR) */}
-          {mode === 'nearby' && step !== 'chat' && (
-            <div className="space-y-3">
-              {/* Incoming Chat Request Banner */}
-              {incomingNearbyRequest && (
-                <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-emerald-400 block">
-                      Incoming Nearby Ping
-                    </span>
-                    <p className="text-xs text-zinc-100 font-semibold">
-                      {incomingNearbyRequest.name} wants to chat!
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setIncomingNearbyRequest(null)}
-                      className="px-2.5 py-1.5 rounded-xl bg-zinc-900 text-zinc-400 hover:text-zinc-200 text-[11px] font-medium"
-                    >
-                      Ignore
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAcceptNearbyRequest}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-[11px] flex items-center gap-1"
-                    >
-                      <Check className="w-3.5 h-3.5" /> Accept
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* GPS Error or Lock Status */}
-              {gpsError ? (
-                <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-center space-y-2">
-                  <ShieldAlert className="w-6 h-6 text-rose-400 mx-auto" />
-                  <p className="text-rose-200 text-xs font-medium">{gpsError}</p>
-                </div>
-              ) : (
-                <>
-                  {/* Circular 50-Meter Radar HUD */}
-                  <div className="relative w-60 h-60 mx-auto my-1 rounded-full bg-zinc-900/90 border border-emerald-500/40 flex items-center justify-center overflow-hidden shadow-[0_0_30px_rgba(16,185,129,0.12)]">
-                    {/* Concentric Distance Rings (25m & 50m) */}
-                    <div className="absolute w-28 h-28 rounded-full border border-emerald-500/25" />
-                    <div className="absolute w-52 h-52 rounded-full border border-dashed border-emerald-500/20" />
-                    <span className="absolute top-2 text-[9px] font-mono text-emerald-500/70">50m</span>
-                    <span className="absolute top-14 text-[9px] font-mono text-emerald-500/60">25m</span>
-
-                    {/* Crosshairs */}
-                    <div className="absolute w-full h-[1px] bg-emerald-500/15" />
-                    <div className="absolute h-full w-[1px] bg-emerald-500/15" />
-
-                    {/* Rotating Radar Sweep */}
-                    <div
-                      className="absolute inset-0 rounded-full animate-spin"
-                      style={{
-                        animationDuration: '4s',
-                        background:
-                          'conic-gradient(from 0deg, rgba(16, 185, 129, 0.28) 0deg, rgba(16, 185, 129, 0) 75deg)',
-                      }}
-                    />
-
-                    {/* Center Pin (You) */}
-                    <div className="relative z-10 flex flex-col items-center">
-                      <span className="w-3.5 h-3.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/30 shadow-lg" />
-                      <span className="text-[9px] font-bold text-emerald-300 mt-1 bg-zinc-950/80 px-1.5 rounded">
-                        YOU
-                      </span>
-                    </div>
-
-                    {/* Plotted Nearby Users within 50m */}
-                    {nearbyUsers.map((u) => {
-                      const radiusPx = Math.max(22, Math.min(98, (u.distanceMeters / 50) * 98));
-                      const rad = (u.angleDeg * Math.PI) / 180;
-                      const x = Math.sin(rad) * radiusPx;
-                      const y = -Math.cos(rad) * radiusPx;
-                      const isSelected = selectedNearbyUser?.id === u.id;
-
-                      return (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => setSelectedNearbyUser(u)}
-                          style={{ transform: `translate(${x}px, ${y}px)` }}
-                          className="absolute z-20 flex flex-col items-center group focus:outline-none"
-                        >
-                          <span
-                            className={`w-4 h-4 rounded-full flex items-center justify-center transition ${
-                              isSelected
-                                ? 'bg-amber-400 ring-4 ring-amber-400/40 scale-125'
-                                : 'bg-emerald-400 ring-4 ring-emerald-400/30 animate-pulse group-hover:scale-125'
-                            }`}
-                          />
-                          <span className="mt-1 px-1.5 py-0.5 rounded bg-zinc-950/90 border border-zinc-800 text-[9px] font-semibold text-zinc-100 whitespace-nowrap shadow">
-                            {u.name} • {u.distanceMeters}m
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Radar Status Bar */}
-                  <div className="flex items-center justify-between text-[11px] text-zinc-400 px-1">
-                    <span className="flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                      {myCoords ? 'GPS Locked • 50m Radius' : 'Locking GPS signal...'}
-                    </span>
-                    <span className="text-emerald-400 font-semibold">
-                      {nearbyUsers.length} {nearbyUsers.length === 1 ? 'Owl' : 'Owls'} Nearby
-                    </span>
-                  </div>
-
-                  {/* Nearby Users List & Request Action */}
-                  {nearbyUsers.length === 0 ? (
-                    <div className="p-3.5 rounded-2xl border border-dashed border-zinc-800 text-center text-zinc-500 text-[11px]">
-                      No active night owls detected within 50m right now. Keep radar open—blips appear live when someone enters your radius.
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-0.5">
-                      {nearbyUsers.map((u) => {
-                        const isPending = outgoingRequestTo === u.id;
-                        return (
-                          <div
-                            key={u.id}
-                            onClick={() => setSelectedNearbyUser(u)}
-                            className={`p-2.5 rounded-xl border flex items-center justify-between transition cursor-pointer ${
-                              selectedNearbyUser?.id === u.id
-                                ? 'bg-zinc-900 border-emerald-500/60'
-                                : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
-                            }`}
-                          >
-                            <div>
-                              <h5 className="font-bold text-zinc-100 text-xs">{u.name}</h5>
-                              <p className="text-[10px] text-emerald-400 font-mono">
-                                ~{u.distanceMeters} meters away
-                              </p>
-                            </div>
-
-                            <button
-                              type="button"
-                              disabled={isPending}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSendNearbyRequest(u);
-                              }}
-                              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition active:scale-95 ${
-                                isPending
-                                  ? 'bg-zinc-800 text-amber-400 border border-amber-500/30'
-                                  : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950'
-                              }`}
-                            >
-                              {isPending ? (
-                                <>
-                                  <Loader2 className="w-3 h-3 animate-spin" /> Requested
-                                </>
-                              ) : (
-                                <>
-                                  <UserPlus className="w-3.5 h-3.5" /> Request Chat
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* STEP 3: SHARED 1-ON-1 PRIVATE CHAT */}
-          {step === 'chat' && chatPartner && (
+          {step === 'chat' && matchedProfile && (
             <div className="flex flex-col h-[380px] justify-between">
               <div className="space-y-2.5 overflow-y-auto pr-1 flex-1 pb-2">
                 {chatMessages.map((msg) => {
@@ -1061,7 +480,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                       className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
                     >
                       <span className="text-[10px] text-zinc-500 px-1 mb-0.5">
-                        {isMe ? 'You' : chatPartner.name}
+                        {isMe ? 'You' : matchedProfile.name}
                       </span>
                       <div
                         className={`max-w-[78%] px-3.5 py-2 rounded-2xl text-xs ${
@@ -1077,13 +496,12 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
                 })}
               </div>
 
-              {/* Chat Input */}
               <form onSubmit={handleSendMessage} className="pt-2 border-t border-zinc-800/80 flex gap-2 shrink-0">
                 <input
                   type="text"
                   value={messageInput}
                   onChange={(e) => setMessageInput(e.target.value)}
-                  placeholder={`Message ${chatPartner.name}...`}
+                  placeholder={`Message ${matchedProfile.name}...`}
                   className="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 rounded-xl px-3.5 py-2 focus:outline-none focus:border-amber-500 text-xs"
                 />
                 <button
@@ -1096,7 +514,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
               </form>
             </div>
           )}
-
         </div>
       </div>
     </div>
