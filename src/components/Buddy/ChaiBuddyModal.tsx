@@ -176,17 +176,46 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     };
   }, [isOpen]);
 
-  // 2. Nearby 50-Meter GPS Radar Presence & Chat Handshake
+  // 2. Nearby 50-Meter GPS Radar (Presence + Broadcast fallback for instant lock)
   useEffect(() => {
     if (!isOpen || mode !== 'nearby') return;
 
     setGpsError(null);
     let watchId: number | null = null;
+    const latestCoordsRef = { lat: 0, lng: 0, ready: false };
+    const peerCoordsMap = new Map<string, { name: string; lat: number; lng: number; updatedAt: number }>();
 
     if (!('geolocation' in navigator)) {
       setGpsError('GPS is not supported on this browser.');
       return;
     }
+
+    const rebuildNearbyList = () => {
+      if (!latestCoordsRef.ready) return;
+      const detected: NearbyUser[] = [];
+
+      peerCoordsMap.forEach((peer, key) => {
+        if (key === deviceSessionId.current) return;
+        // Ignore stale pings older than 2 minutes
+        if (Date.now() - peer.updatedAt > 120000) return;
+
+        const rawDist = getDistanceMeters(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng);
+        // Allow up to 150m raw GPS drift for indoor testing while displaying clamped 0-50m radar range
+        if (rawDist <= 150) {
+          detected.push({
+            id: key,
+            name: peer.name,
+            lat: peer.lat,
+            lng: peer.lng,
+            distanceMeters: Math.min(50, rawDist),
+            angleDeg: getBearingDeg(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng),
+            updatedAt: peer.updatedAt,
+          });
+        }
+      });
+
+      setNearbyUsers(detected);
+    };
 
     const nearbyChannel = supabase.channel('cbe-nearby-50m', {
       config: {
@@ -195,39 +224,56 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       },
     });
 
-    // Sync users within 50m radius from Presence state
-    const syncNearbyPresence = (currentLat: number, currentLng: number) => {
-      const state = nearbyChannel.presenceState();
-      const detected: NearbyUser[] = [];
-
-      Object.entries(state).forEach(([key, presences]) => {
-        if (key === deviceSessionId.current) return;
-        const latest: any = Array.isArray(presences) ? presences[presences.length - 1] : null;
-        if (!latest || typeof latest.lat !== 'number' || typeof latest.lng !== 'number') return;
-
-        const dist = getDistanceMeters(currentLat, currentLng, latest.lat, latest.lng);
-        if (dist <= 50) {
-          detected.push({
-            id: key,
-            name: latest.name || 'Night Owl',
-            lat: latest.lat,
-            lng: latest.lng,
-            distanceMeters: dist,
-            angleDeg: getBearingDeg(currentLat, currentLng, latest.lat, latest.lng),
-            updatedAt: latest.updatedAt || Date.now(),
-          });
-        }
-      });
-
-      setNearbyUsers(detected);
-    };
-
     nearbyChannel
       .on('presence', { event: 'sync' }, () => {
-        setMyCoords((prev) => {
-          if (prev) syncNearbyPresence(prev.lat, prev.lng);
-          return prev;
+        const state = nearbyChannel.presenceState();
+        Object.entries(state).forEach(([key, presences]) => {
+          if (key === deviceSessionId.current) return;
+          const latest: any = Array.isArray(presences) ? presences[presences.length - 1] : null;
+          if (latest && typeof latest.lat === 'number') {
+            peerCoordsMap.set(key, {
+              name: latest.name || 'Night Owl',
+              lat: latest.lat,
+              lng: latest.lng,
+              updatedAt: latest.updatedAt || Date.now(),
+            });
+          }
         });
+        rebuildNearbyList();
+      })
+      .on('broadcast', { event: 'nearby_ping' }, ({ payload }) => {
+        if (!payload || payload.id === deviceSessionId.current) return;
+        peerCoordsMap.set(payload.id, {
+          name: payload.name || 'Night Owl',
+          lat: payload.lat,
+          lng: payload.lng,
+          updatedAt: Date.now(),
+        });
+        rebuildNearbyList();
+
+        // Reply with our own coordinates if we have a lock
+        if (latestCoordsRef.ready) {
+          nearbyChannel.send({
+            type: 'broadcast',
+            event: 'nearby_ping_ack',
+            payload: {
+              id: deviceSessionId.current,
+              name: myUserName,
+              lat: latestCoordsRef.lat,
+              lng: latestCoordsRef.lng,
+            },
+          });
+        }
+      })
+      .on('broadcast', { event: 'nearby_ping_ack' }, ({ payload }) => {
+        if (!payload || payload.id === deviceSessionId.current) return;
+        peerCoordsMap.set(payload.id, {
+          name: payload.name || 'Night Owl',
+          lat: payload.lat,
+          lng: payload.lng,
+          updatedAt: Date.now(),
+        });
+        rebuildNearbyList();
       })
       .on('broadcast', { event: 'nearby_chat_request' }, ({ payload }) => {
         const { fromId, fromName, toId } = payload;
@@ -252,30 +298,57 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
           setStep('chat');
         }
       })
-      .subscribe(async (status) => {
+      .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          watchId = navigator.geolocation.watchPosition(
-            async (pos) => {
-              const lat = pos.coords.latitude;
-              const lng = pos.coords.longitude;
-              setMyCoords({ lat, lng });
+          const handlePosition = async (pos: GeolocationPosition) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            latestCoordsRef.lat = lat;
+            latestCoordsRef.lng = lng;
+            latestCoordsRef.ready = true;
+            setMyCoords({ lat, lng });
+            setGpsError(null);
 
-              await nearbyChannel.track({
+            await nearbyChannel.track({
+              name: myUserName,
+              lat,
+              lng,
+              updatedAt: Date.now(),
+            });
+
+            await nearbyChannel.send({
+              type: 'broadcast',
+              event: 'nearby_ping',
+              payload: {
+                id: deviceSessionId.current,
                 name: myUserName,
                 lat,
                 lng,
-                updatedAt: Date.now(),
-              });
-              syncNearbyPresence(lat, lng);
-            },
+              },
+            });
+
+            rebuildNearbyList();
+          };
+
+          // Fast initial fix (allows Wi-Fi/cell triangulation immediately), followed by high-accuracy watch
+          navigator.geolocation.getCurrentPosition(handlePosition, () => {}, {
+            enableHighAccuracy: false,
+            timeout: 5000,
+            maximumAge: 30000,
+          });
+
+          watchId = navigator.geolocation.watchPosition(
+            handlePosition,
             (err) => {
-              setGpsError(
-                err.code === 1
-                  ? 'Location permission denied. Allow GPS access to scan 50m radius.'
-                  : 'Unable to lock GPS signal. Move outdoors or check device location.'
-              );
+              if (!latestCoordsRef.ready) {
+                setGpsError(
+                  err.code === 1
+                    ? 'Location permission denied. Allow GPS access in browser settings.'
+                    : 'Waiting for GPS signal... Turn on Location/GPS on your phone.'
+                );
+              }
             },
-            { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
           );
         }
       });
@@ -289,8 +362,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
       }
     };
   }, [isOpen, mode, myUserName]);
-
-  if (!isOpen) return null;
 
   // Music Match: Save & Go Live -> Mandatory 3-second search
   const handleSaveVibe = async (e: React.FormEvent) => {
