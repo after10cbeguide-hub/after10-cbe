@@ -38,7 +38,7 @@ interface NearbyUser {
   lat: number;
   lng: number;
   distanceMeters: number;
-  angleDeg: number; // for plotting on the radar HUD
+  angleDeg: number;
   updatedAt: number;
 }
 
@@ -117,6 +117,7 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     if (isOpen) {
       setMode('select');
       setStep('create');
+      setChatPartner(null);
       setSelectedNearbyUser(null);
       setOutgoingRequestTo(null);
       setIncomingNearbyRequest(null);
@@ -363,6 +364,19 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
     };
   }, [isOpen, mode, myUserName]);
 
+  // Clean close handler so modal always exits cleanly back to homescreen
+  const handleCloseModal = () => {
+    setMode('select');
+    setStep('create');
+    setChatPartner(null);
+    setSelectedNearbyUser(null);
+    setOutgoingRequestTo(null);
+    setIncomingNearbyRequest(null);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
   // Music Match: Save & Go Live -> Mandatory 3-second search
   const handleSaveVibe = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -512,17 +526,23 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
   const handleBackNavigation = () => {
     if (step === 'chat') {
-      setStep(mode === 'music' ? 'discover' : 'create');
       setChatPartner(null);
-    } else if (mode !== 'select') {
+      setStep(mode === 'music' ? 'discover' : 'create');
+    } else {
       setMode('select');
       setStep('create');
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md">
-      <div className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div
+      onClick={handleCloseModal}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-zinc-950 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl relative max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+      >
         
         {/* Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-zinc-800/80 shrink-0">
@@ -573,7 +593,8 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleCloseModal}
             aria-label="Close modal"
             className="text-zinc-400 hover:text-zinc-100 p-1.5 rounded-xl hover:bg-zinc-900 transition"
           >
@@ -917,7 +938,6 @@ export default function ChaiBuddyModal({ isOpen, onClose, currentUser }: Props) 
 
                     {/* Plotted Nearby Users within 50m */}
                     {nearbyUsers.map((u) => {
-                      // Map distance (0..50m) to radius (18px..100px)
                       const radiusPx = Math.max(22, Math.min(98, (u.distanceMeters / 50) * 98));
                       const rad = (u.angleDeg * Math.PI) / 180;
                       const x = Math.sin(rad) * radiusPx;
