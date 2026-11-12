@@ -399,29 +399,45 @@ const handleAddTurf = (newTurf: TurfVenue) => {
           </div>
         </div>
 
-        {/* Category Filter Pills */}
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pointer-events-auto px-0.5 py-0.5">
-          {categories.map((cat) => {
-            const Icon = cat.icon;
-            const active = selectedCategory === cat.value && !safeHavensOnly;
-            return (
-              <button
-                key={cat.value}
-                onClick={() => {
-                  setSelectedCategory(cat.value);
-                  setSafeHavensOnly(false);
-                }}
-                className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-medium whitespace-nowrap transition border ${
-                  active
-                    ? 'bg-zinc-100 text-zinc-900 border-zinc-100 shadow-md font-semibold'
-                    : 'bg-zinc-950/90 sm:bg-zinc-900/90 text-zinc-400 border-zinc-800/90 hover:text-zinc-200 backdrop-blur-md'
-                }`}
-              >
-                <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                {cat.label}
-              </button>
-            );
-          })}
+        {/* Clickable Barbarian Turf Banner */}
+        <div className="w-full pointer-events-auto">
+          <button
+            type="button"
+            onClick={() => setIsTurfOpen(true)}
+            className="w-full relative h-28 sm:h-32 rounded-2xl overflow-hidden border border-emerald-500/60 shadow-2xl shadow-emerald-950/60 group active:scale-[0.99] transition-all text-left flex items-end"
+          >
+            {/* Barbarian Image - Fully bright and prominent */}
+            <img
+              src="/turf-banner.jpg"
+              alt="Midnight Turfs"
+              className="absolute inset-0 w-full h-full object-cover object-[center_30%] group-hover:scale-105 transition-transform duration-500"
+            />
+
+            {/* Subtle bottom-only gradient so characters stay clearly visible */}
+            <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/90 via-zinc-950/30 to-transparent" />
+
+            {/* Content anchored at the bottom */}
+            <div className="relative z-10 p-3 sm:p-3.5 flex items-end justify-between w-full">
+              <div>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-300 drop-shadow">
+                    Arena Live • Night Slots
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white tracking-wide uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                  Midnight Turfs
+                </h3>
+                <p className="text-[11px] text-zinc-200 font-medium drop-shadow">
+                  Box Cricket • 5v5 Football • Badminton
+                </p>
+              </div>
+
+              <div className="bg-emerald-500 group-hover:bg-emerald-400 text-zinc-950 px-3.5 py-1.5 rounded-xl font-extrabold text-xs tracking-tight transition shadow-lg shrink-0">
+                Book Turf
+              </div>
+            </div>
+          </button>
         </div>
       </header>
 
