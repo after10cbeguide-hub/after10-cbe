@@ -13,7 +13,8 @@ import {
   Send,
   MessageCircle,
   ArrowLeft,
-  Loader2
+  Loader2,
+  UserX
 } from 'lucide-react';
 
 interface Props {
@@ -62,8 +63,11 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([]);
   const [selectedUser, setSelectedUser] = useState<NearbyUser | null>(null);
+
+  // Request & Ignore states
   const [outgoingRequestTo, setOutgoingRequestTo] = useState<string | null>(null);
   const [incomingRequest, setIncomingRequest] = useState<{ id: string; name: string } | null>(null);
+  const [ignoredNotice, setIgnoredNotice] = useState<string | null>(null);
 
   // Dedicated 1-on-1 Chat state
   const [chatPartner, setChatPartner] = useState<{ id: string; name: string } | null>(null);
@@ -75,6 +79,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
   );
   const myUserName = currentUser?.name || `Owl #${deviceSessionId.current.slice(-3).toUpperCase()}`;
   const channelRef = useRef<any>(null);
+  const ignoreTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -84,7 +89,9 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     setSelectedUser(null);
     setOutgoingRequestTo(null);
     setIncomingRequest(null);
+    setIgnoredNotice(null);
     setChatPartner(null);
+    setChatMessages([]);
 
     if (!('geolocation' in navigator)) {
       setGpsError('GPS is not supported on this browser.');
@@ -98,11 +105,16 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
 
     const rebuildNearbyList = () => {
       if (!latestCoordsRef.ready) return;
+      const now = Date.now();
       const detected: NearbyUser[] = [];
 
       peerCoordsMap.forEach((peer, key) => {
         if (key === deviceSessionId.current) return;
-        if (Date.now() - peer.updatedAt > 60000) return;
+        // Remove peers inactive for > 20 seconds
+        if (now - peer.updatedAt > 20000) {
+          peerCoordsMap.delete(key);
+          return;
+        }
 
         const rawDist = getDistanceMeters(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng);
         if (rawDist <= 150) {
@@ -153,11 +165,17 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
               name: latest.name || 'Night Owl',
               lat: latest.lat,
               lng: latest.lng,
-              updatedAt: latest.updatedAt || Date.now(),
+              updatedAt: Date.now(),
             });
           }
         });
         rebuildNearbyList();
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (key) {
+          peerCoordsMap.delete(key);
+          rebuildNearbyList();
+        }
       })
       .on('broadcast', { event: 'nearby_ping' }, ({ payload }) => {
         if (!payload || payload.id === deviceSessionId.current) return;
@@ -170,13 +188,24 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         rebuildNearbyList();
       })
       .on('broadcast', { event: 'nearby_request' }, ({ payload }) => {
-        if (payload.toId === deviceSessionId.current) {
+        if (payload?.toId === deviceSessionId.current) {
           setIncomingRequest({ id: payload.fromId, name: payload.fromName });
         }
       })
+      .on('broadcast', { event: 'nearby_ignore' }, ({ payload }) => {
+        if (payload?.toId === deviceSessionId.current) {
+          setOutgoingRequestTo((prev) => (prev === payload.fromId ? null : prev));
+          setIgnoredNotice(`${payload.fromName || 'User'} ignored your chat request.`);
+          if (ignoreTimerRef.current) clearTimeout(ignoreTimerRef.current);
+          ignoreTimerRef.current = setTimeout(() => {
+            setIgnoredNotice(null);
+          }, 4500);
+        }
+      })
       .on('broadcast', { event: 'nearby_accept' }, ({ payload }) => {
-        if (payload.toId === deviceSessionId.current) {
+        if (payload?.toId === deviceSessionId.current) {
           setOutgoingRequestTo(null);
+          setIgnoredNotice(null);
           setChatPartner({ id: payload.fromId, name: payload.fromName });
           setChatMessages([
             {
@@ -191,7 +220,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         }
       })
       .on('broadcast', { event: 'nearby_message' }, ({ payload }) => {
-        if (payload.targetUserId === deviceSessionId.current) {
+        if (payload?.targetUserId === deviceSessionId.current && payload?.message) {
           setChatMessages((prev) => [...prev, payload.message]);
         }
       })
@@ -248,6 +277,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     return () => {
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (ignoreTimerRef.current) clearTimeout(ignoreTimerRef.current);
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
       }
@@ -257,6 +287,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
   if (!isOpen) return null;
 
   const handleSendRequest = async (target: NearbyUser) => {
+    setIgnoredNotice(null);
     setOutgoingRequestTo(target.id);
     if (channelRef.current) {
       await channelRef.current.send({
@@ -271,10 +302,29 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     }
   };
 
+  const handleIgnoreRequest = async () => {
+    if (!incomingRequest) return;
+    const requester = incomingRequest;
+    setIncomingRequest(null);
+
+    if (channelRef.current) {
+      await channelRef.current.send({
+        type: 'broadcast',
+        event: 'nearby_ignore',
+        payload: {
+          fromId: deviceSessionId.current,
+          fromName: myUserName,
+          toId: requester.id,
+        },
+      });
+    }
+  };
+
   const handleAcceptRequest = async () => {
     if (!incomingRequest) return;
     const partner = incomingRequest;
     setIncomingRequest(null);
+    setIgnoredNotice(null);
 
     if (channelRef.current) {
       await channelRef.current.send({
@@ -328,6 +378,16 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     }
   };
 
+  const handleBack = () => {
+    if (step === 'chat') {
+      setChatPartner(null);
+      setOutgoingRequestTo(null);
+      setStep('radar');
+    } else {
+      onBackToMenu();
+    }
+  };
+
   return (
     <div
       onClick={onClose}
@@ -342,7 +402,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
           <div className="flex items-center gap-2.5">
             <button
               type="button"
-              onClick={() => (step === 'chat' ? setStep('radar') : onBackToMenu())}
+              onClick={handleBack}
               className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 transition"
               aria-label="Back"
             >
@@ -380,9 +440,27 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         <div className="overflow-y-auto pr-1 py-3 text-xs flex-1 flex flex-col justify-between">
           {step === 'radar' ? (
             <div className="space-y-3">
+              {/* Ignored Request Toast Banner */}
+              {ignoredNotice && (
+                <div className="p-3 rounded-2xl bg-rose-950/70 border border-rose-500/50 flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center gap-2">
+                    <UserX className="w-4 h-4 text-rose-400 shrink-0" />
+                    <p className="text-xs text-rose-200 font-medium">{ignoredNotice}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIgnoredNotice(null)}
+                    className="text-rose-300 hover:text-white p-1"
+                    aria-label="Dismiss notice"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Incoming Request Banner */}
               {incomingRequest && (
-                <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 flex items-center justify-between gap-2">
+                <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
                   <div>
                     <span className="text-[10px] font-bold uppercase text-emerald-400 block">
                       Incoming Nearby Ping
@@ -394,15 +472,15 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setIncomingRequest(null)}
-                      className="px-2.5 py-1.5 rounded-xl bg-zinc-900 text-zinc-400 hover:text-zinc-200 text-[11px]"
+                      onClick={handleIgnoreRequest}
+                      className="px-2.5 py-1.5 rounded-xl bg-zinc-900 text-zinc-400 hover:text-rose-300 text-[11px] font-medium transition"
                     >
                       Ignore
                     </button>
                     <button
                       type="button"
                       onClick={handleAcceptRequest}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-[11px] flex items-center gap-1"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-[11px] flex items-center gap-1 transition"
                     >
                       <Check className="w-3.5 h-3.5" /> Accept
                     </button>
