@@ -74,16 +74,21 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
   const [chatMessages, setChatMessages] = useState<VibeMessage[]>([]);
   const [messageInput, setMessageInput] = useState('');
 
+  // Unique per-device/per-tab ID so same account on 2 phones never collides or shows self
   const deviceSessionId = useRef<string>(
-    currentUser?.id || `owl_${Math.random().toString(36).substring(2, 9)}`
+    `dev_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`
   );
-  const myUserName = currentUser?.name || `Owl #${deviceSessionId.current.slice(-3).toUpperCase()}`;
+  const myUserName = currentUser?.name
+    ? currentUser.name.split(' ')[0]
+    : `Owl #${deviceSessionId.current.slice(-3).toUpperCase()}`;
+
   const channelRef = useRef<any>(null);
   const ignoreTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
 
+    const myId = deviceSessionId.current;
     setStep('radar');
     setGpsError(null);
     setSelectedUser(null);
@@ -92,6 +97,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     setIgnoredNotice(null);
     setChatPartner(null);
     setChatMessages([]);
+    setNearbyUsers([]);
 
     if (!('geolocation' in navigator)) {
       setGpsError('GPS is not supported on this browser.');
@@ -109,9 +115,11 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       const detected: NearbyUser[] = [];
 
       peerCoordsMap.forEach((peer, key) => {
-        if (key === deviceSessionId.current) return;
-        // Remove peers inactive for > 20 seconds
-        if (now - peer.updatedAt > 20000) {
+        // Strictly filter out self
+        if (!key || key === myId) return;
+
+        // Remove stale peers inactive for > 15 seconds
+        if (now - peer.updatedAt > 15000) {
           peerCoordsMap.delete(key);
           return;
         }
@@ -133,9 +141,9 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       setNearbyUsers(detected);
     };
 
-    const channel = supabase.channel('cbe-nearby-50m-v2', {
+    const channel = supabase.channel('cbe-nearby-50m-v3', {
       config: {
-        presence: { key: deviceSessionId.current },
+        presence: { key: myId },
         broadcast: { self: false },
       },
     });
@@ -146,7 +154,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         type: 'broadcast',
         event: 'nearby_ping',
         payload: {
-          id: deviceSessionId.current,
+          id: myId,
           name: myUserName,
           lat: latestCoordsRef.lat,
           lng: latestCoordsRef.lng,
@@ -158,9 +166,9 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         Object.entries(state).forEach(([key, presences]) => {
-          if (key === deviceSessionId.current) return;
+          if (key === myId) return;
           const latest: any = Array.isArray(presences) ? presences[presences.length - 1] : null;
-          if (latest && typeof latest.lat === 'number') {
+          if (latest && latest.id !== myId && typeof latest.lat === 'number') {
             peerCoordsMap.set(key, {
               name: latest.name || 'Night Owl',
               lat: latest.lat,
@@ -178,7 +186,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         }
       })
       .on('broadcast', { event: 'nearby_ping' }, ({ payload }) => {
-        if (!payload || payload.id === deviceSessionId.current) return;
+        if (!payload || !payload.id || payload.id === myId) return;
         peerCoordsMap.set(payload.id, {
           name: payload.name || 'Night Owl',
           lat: payload.lat,
@@ -188,22 +196,22 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         rebuildNearbyList();
       })
       .on('broadcast', { event: 'nearby_request' }, ({ payload }) => {
-        if (payload?.toId === deviceSessionId.current) {
+        if (payload?.toId === myId && payload?.fromId !== myId) {
           setIncomingRequest({ id: payload.fromId, name: payload.fromName });
         }
       })
       .on('broadcast', { event: 'nearby_ignore' }, ({ payload }) => {
-        if (payload?.toId === deviceSessionId.current) {
-          setOutgoingRequestTo((prev) => (prev === payload.fromId ? null : prev));
+        if (payload?.toId === myId) {
+          setOutgoingRequestTo(null);
           setIgnoredNotice(`${payload.fromName || 'User'} ignored your chat request.`);
           if (ignoreTimerRef.current) clearTimeout(ignoreTimerRef.current);
           ignoreTimerRef.current = setTimeout(() => {
             setIgnoredNotice(null);
-          }, 4500);
+          }, 5000);
         }
       })
       .on('broadcast', { event: 'nearby_accept' }, ({ payload }) => {
-        if (payload?.toId === deviceSessionId.current) {
+        if (payload?.toId === myId) {
           setOutgoingRequestTo(null);
           setIgnoredNotice(null);
           setChatPartner({ id: payload.fromId, name: payload.fromName });
@@ -220,7 +228,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         }
       })
       .on('broadcast', { event: 'nearby_message' }, ({ payload }) => {
-        if (payload?.targetUserId === deviceSessionId.current && payload?.message) {
+        if (payload?.targetUserId === myId && payload?.message) {
           setChatMessages((prev) => [...prev, payload.message]);
         }
       })
@@ -236,6 +244,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
             setGpsError(null);
 
             await channel.track({
+              id: myId,
               name: myUserName,
               lat,
               lng,
@@ -279,6 +288,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (ignoreTimerRef.current) clearTimeout(ignoreTimerRef.current);
       if (channelRef.current) {
+        channelRef.current.untrack();
         supabase.removeChannel(channelRef.current);
       }
     };
@@ -442,10 +452,10 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
             <div className="space-y-3">
               {/* Ignored Request Toast Banner */}
               {ignoredNotice && (
-                <div className="p-3 rounded-2xl bg-rose-950/70 border border-rose-500/50 flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
+                <div className="p-3 rounded-2xl bg-rose-950/80 border border-rose-500/60 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <UserX className="w-4 h-4 text-rose-400 shrink-0" />
-                    <p className="text-xs text-rose-200 font-medium">{ignoredNotice}</p>
+                    <p className="text-xs text-rose-200 font-semibold">{ignoredNotice}</p>
                   </div>
                   <button
                     type="button"
@@ -460,7 +470,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
 
               {/* Incoming Request Banner */}
               {incomingRequest && (
-                <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
+                <div className="p-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 flex items-center justify-between gap-2">
                   <div>
                     <span className="text-[10px] font-bold uppercase text-emerald-400 block">
                       Incoming Nearby Ping
