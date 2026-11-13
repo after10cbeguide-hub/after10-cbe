@@ -141,67 +141,104 @@ export default function NightMap({
   }, []);
 
   // Supabase Realtime Ghost Presence Synchronization (Other Users Only)
- useEffect(() => {
+  useEffect(() => {
     if (!mounted) return;
 
-    // Unique per-tab session ID so your own device never shows on your own map
     const tabGhostId = `ghost_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const displayName = user?.name ? user.name.split(' ')[0] : 'Night Owl';
     let watchId: number | null = null;
     let heartbeatId: NodeJS.Timeout | null = null;
     const latestPosRef = { lat: 0, lng: 0, ready: false };
+    const peerMap = new Map<string, GhostUser & { seenAt: number }>();
 
-    const channel = supabase.channel('after10-presence-network', {
+    const rebuildGhosts = () => {
+      const now = Date.now();
+      const active: GhostUser[] = [];
+      peerMap.forEach((peer, key) => {
+        if (key === tabGhostId) return;
+        // Remove peers that closed their tab (> 12s without ping/presence)
+        if (now - peer.seenAt > 12000) {
+          peerMap.delete(key);
+          return;
+        }
+        active.push(peer);
+      });
+      setRealtimeGhosts(active);
+    };
+
+    const channel = supabase.channel('after10-presence-network-v2', {
       config: {
         presence: { key: tabGhostId },
+        broadcast: { self: false },
       },
     });
 
     const publishPresence = () => {
       if (!latestPosRef.ready) return;
-      channel.track({
+      const payload = {
         id: tabGhostId,
         name: displayName,
         area: 'Coimbatore City',
         lat: latestPosRef.lat,
         lng: latestPosRef.lng,
         lastActive: Date.now(),
+      };
+      channel.track(payload);
+      channel.send({
+        type: 'broadcast',
+        event: 'ghost_ping',
+        payload,
       });
     };
 
-    const syncOtherGhosts = () => {
+    const syncFromPresence = () => {
       const presenceState = channel.presenceState();
-      const liveList: GhostUser[] = [];
-
       Object.entries(presenceState).forEach(([key, presences]: [string, any]) => {
-        // Strictly exclude your own tab/device
         if (key === tabGhostId) return;
-
         const latest = Array.isArray(presences) ? presences[presences.length - 1] : null;
-        if (
-          latest &&
-          latest.id !== tabGhostId &&
-          typeof latest.lat === 'number' &&
-          typeof latest.lng === 'number'
-        ) {
-          liveList.push({
+        if (latest && latest.id !== tabGhostId && typeof latest.lat === 'number') {
+          peerMap.set(key, {
             id: key,
             name: latest.name || 'Night Owl',
             area: latest.area || 'Coimbatore City',
             lat: latest.lat,
             lng: latest.lng,
             lastActive: latest.lastActive || Date.now(),
-          } as GhostUser);
+            seenAt: Date.now(),
+          });
         }
       });
-
-      setRealtimeGhosts(liveList);
+      rebuildGhosts();
     };
 
     channel
-      .on('presence', { event: 'sync' }, syncOtherGhosts)
-      .on('presence', { event: 'join' }, syncOtherGhosts)
-      .on('presence', { event: 'leave' }, syncOtherGhosts)
+      .on('presence', { event: 'sync' }, syncFromPresence)
+      .on('presence', { event: 'join' }, syncFromPresence)
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (key) {
+          peerMap.delete(key);
+          rebuildGhosts();
+        }
+      })
+      .on('broadcast', { event: 'ghost_ping' }, ({ payload }) => {
+        if (!payload || !payload.id || payload.id === tabGhostId) return;
+        peerMap.set(payload.id, {
+          id: payload.id,
+          name: payload.name || 'Night Owl',
+          area: payload.area || 'Coimbatore City',
+          lat: payload.lat,
+          lng: payload.lng,
+          lastActive: Date.now(),
+          seenAt: Date.now(),
+        });
+        rebuildGhosts();
+      })
+      .on('broadcast', { event: 'ghost_leave' }, ({ payload }) => {
+        if (payload?.id) {
+          peerMap.delete(payload.id);
+          rebuildGhosts();
+        }
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED' && 'geolocation' in navigator) {
           const onPosition = (pos: GeolocationPosition) => {
@@ -211,27 +248,31 @@ export default function NightMap({
             publishPresence();
           };
 
-          // Fast initial fix so ghost appears within ~1 second
-          navigator.geolocation.getCurrentPosition(onPosition, () => {}, {
-            enableHighAccuracy: false,
-            timeout: 5000,
-            maximumAge: 30000,
-          });
+          navigator.geolocation.getCurrentPosition(
+            onPosition,
+            (err) => console.warn('[Ghost Radar] GPS unavailable:', err.message),
+            { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+          );
 
-          // Continuous high-accuracy updates
           watchId = navigator.geolocation.watchPosition(
             onPosition,
             () => {},
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
           );
 
-          // Keep presence alive every 5 seconds while the tab stays open
-          heartbeatId = setInterval(publishPresence, 5000);
+          heartbeatId = setInterval(() => {
+            publishPresence();
+            rebuildGhosts();
+          }, 4000);
         }
       });
 
-    // Immediately remove ghost only when user actually closes the tab
     const handleTabClose = () => {
+      channel.send({
+        type: 'broadcast',
+        event: 'ghost_leave',
+        payload: { id: tabGhostId },
+      });
       channel.untrack();
     };
     window.addEventListener('beforeunload', handleTabClose);
@@ -240,7 +281,7 @@ export default function NightMap({
       window.removeEventListener('beforeunload', handleTabClose);
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (heartbeatId !== null) clearInterval(heartbeatId);
-      channel.untrack();
+      handleTabClose();
       channel.unsubscribe();
     };
   }, [mounted, user?.id, user?.name]);
