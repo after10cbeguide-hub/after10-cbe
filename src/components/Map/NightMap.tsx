@@ -141,18 +141,33 @@ export default function NightMap({
   }, []);
 
   // Supabase Realtime Ghost Presence Synchronization (Other Users Only)
-  useEffect(() => {
+ useEffect(() => {
     if (!mounted) return;
 
     // Unique per-tab session ID so your own device never shows on your own map
     const tabGhostId = `ghost_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    const displayName = user?.name ? user.name.split(' ')[0] : 'Night Owl';
     let watchId: number | null = null;
+    let heartbeatId: NodeJS.Timeout | null = null;
+    const latestPosRef = { lat: 0, lng: 0, ready: false };
 
     const channel = supabase.channel('after10-presence-network', {
       config: {
         presence: { key: tabGhostId },
       },
     });
+
+    const publishPresence = () => {
+      if (!latestPosRef.ready) return;
+      channel.track({
+        id: tabGhostId,
+        name: displayName,
+        area: 'Coimbatore City',
+        lat: latestPosRef.lat,
+        lng: latestPosRef.lng,
+        lastActive: Date.now(),
+      });
+    };
 
     const syncOtherGhosts = () => {
       const presenceState = channel.presenceState();
@@ -189,42 +204,46 @@ export default function NightMap({
       .on('presence', { event: 'leave' }, syncOtherGhosts)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED' && 'geolocation' in navigator) {
+          const onPosition = (pos: GeolocationPosition) => {
+            latestPosRef.lat = pos.coords.latitude;
+            latestPosRef.lng = pos.coords.longitude;
+            latestPosRef.ready = true;
+            publishPresence();
+          };
+
+          // Fast initial fix so ghost appears within ~1 second
+          navigator.geolocation.getCurrentPosition(onPosition, () => {}, {
+            enableHighAccuracy: false,
+            timeout: 5000,
+            maximumAge: 30000,
+          });
+
+          // Continuous high-accuracy updates
           watchId = navigator.geolocation.watchPosition(
-            (pos) => {
-              channel.track({
-                id: tabGhostId,
-                name: user?.name ? user.name.split(' ')[0] : 'Night Owl',
-                area: 'Coimbatore City',
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-                lastActive: Date.now(),
-              });
-            },
-            () => {
-              // Do not broadcast fake coordinates if GPS is off/denied
-            },
-            { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+            onPosition,
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
           );
+
+          // Keep presence alive every 5 seconds while the tab stays open
+          heartbeatId = setInterval(publishPresence, 5000);
         }
       });
 
-    // Immediately remove ghost when user closes or leaves the tab
+    // Immediately remove ghost only when user actually closes the tab
     const handleTabClose = () => {
       channel.untrack();
     };
     window.addEventListener('beforeunload', handleTabClose);
-    window.addEventListener('pagehide', handleTabClose);
 
     return () => {
       window.removeEventListener('beforeunload', handleTabClose);
-      window.removeEventListener('pagehide', handleTabClose);
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (heartbeatId !== null) clearInterval(heartbeatId);
       channel.untrack();
       channel.unsubscribe();
     };
-  }, [mounted, user]);
+  }, [mounted, user?.id, user?.name]);
 
   if (!mounted) {
     return (
