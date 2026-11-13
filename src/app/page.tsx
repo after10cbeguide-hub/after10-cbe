@@ -105,22 +105,31 @@ const handleAddTurf = (newTurf: TurfVenue) => {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState<string | undefined>(undefined);
 
-  // Auto-register user's presence as an active ghost
+  // Register user's ghost only at their actual GPS location (no fake random coordinates or college tags)
   useEffect(() => {
-    const latOffset = (Math.random() - 0.5) * 0.012;
-    const lngOffset = (Math.random() - 0.5) * 0.012;
+    if (!('geolocation' in navigator)) return;
 
-    const myGhost: GhostUser = {
-      id: 'my_ghost_presence',
-      name: user ? user.name.split(' ')[0] : `Ghost #${Math.floor(100 + Math.random() * 900)}`,
-      area: 'Coimbatore Central',
-      lat: 11.0168 + latOffset,
-      lng: 76.9558 + lngOffset,
-      college: user?.college,
-      lastActive: Date.now(),
-    };
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const myGhost: GhostUser = {
+          id: 'my_ghost_presence',
+          name: user ? user.name.split(' ')[0] : `Ghost #${Math.floor(100 + Math.random() * 900)}`,
+          area: 'Live GPS',
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          lastActive: Date.now(),
+        };
 
-    setGhosts((prev) => [myGhost, ...prev.filter((g) => g.id !== 'my_ghost_presence')]);
+        setGhosts((prev) => [myGhost, ...prev.filter((g) => g.id !== 'my_ghost_presence')]);
+      },
+      () => {
+        // If GPS permission is denied, don't place a wrong/fake ghost pin on the map
+        setGhosts((prev) => prev.filter((g) => g.id !== 'my_ghost_presence'));
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
   }, [user]);
 
   // Fetch spots from Supabase & subscribe to live updates

@@ -156,6 +156,7 @@ export default function NightMap({
         localStorage.setItem('after10_ghost_key', localUserId);
       }
     }
+    let watchId: number | null = null;
 
     const channel = supabase.channel('after10-presence-network', {
       config: {
@@ -188,39 +189,30 @@ export default function NightMap({
         setRealtimeGhosts(liveList);
       })
       .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          const defaultCbeLat = 11.0168 + (Math.random() - 0.5) * 0.02;
-          const defaultCbeLng = 76.9558 + (Math.random() - 0.5) * 0.02;
-
-          const broadcastPresence = (lat: number, lng: number, areaName: string) => {
-            channel.track({
-              id: localUserId,
-              name: user?.name || 'Night Owl',
-              area: areaName,
-              lat,
-              lng,
-              college: user?.college || 'PSG / CIT / KCT',
-              lastActive: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            });
-          };
-
-          if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                broadcastPresence(pos.coords.latitude, pos.coords.longitude, 'Coimbatore City');
-              },
-              () => {
-                broadcastPresence(defaultCbeLat, defaultCbeLng, 'Race Course / RS Puram');
-              },
-              { timeout: 7000 }
-            );
-          } else {
-            broadcastPresence(defaultCbeLat, defaultCbeLng, 'Race Course');
-          }
+        if (status === 'SUBSCRIBED' && 'geolocation' in navigator) {
+          watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+              channel.track({
+                id: localUserId,
+                name: user?.name ? user.name.split(' ')[0] : 'Night Owl',
+                area: 'Coimbatore City',
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                lastActive: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              });
+            },
+            () => {
+              // Do not broadcast fake coordinates if GPS is off/denied
+            },
+            { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+          );
         }
       });
 
     return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
       channel.unsubscribe();
     };
   }, [mounted, user]);
@@ -240,11 +232,8 @@ export default function NightMap({
     (spot) => selectedCategory === 'all' || spot.category === selectedCategory
   );
 
-  // Combine seed ghosts with real Supabase peers (avoiding duplication)
-  const combinedGhosts = [
-    ...realtimeGhosts,
-    ...ghosts.filter((g) => !realtimeGhosts.some((rg) => rg.id === g.id)),
-  ];
+  // Use live Supabase presence ghosts directly (avoiding duplicate fallback pins)
+  const combinedGhosts = realtimeGhosts.length > 0 ? realtimeGhosts : ghosts;
 
   const handleVote = (spotId: string, status: SpotVibeStatus, crowd: CrowdLevel) => {
     onUpdateSpotVibe(spotId, status, crowd);
@@ -296,11 +285,7 @@ export default function NightMap({
                 <MapPin className="w-3 h-3 text-zinc-500" />
                 Near {ghost.area}
               </p>
-              {ghost.college && (
-                <div className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-1.5 py-0.5 rounded-md inline-block">
-                  🎓 {ghost.college}
-                </div>
-              )}
+              
               <p className="text-[9px] text-zinc-500 font-mono pt-1 border-t border-zinc-800/80">
                 Roaming the night streets
               </p>
