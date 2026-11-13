@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -95,10 +95,7 @@ const createGhostMarkerIcon = () => {
     className: 'custom-ghost-marker',
     html: `
       <div class="relative flex items-center justify-center">
-        <!-- Ambient pulsating purple radar aura -->
         <span class="absolute h-10 w-10 rounded-full animate-ping opacity-35 bg-purple-500"></span>
-        
-        <!-- Custom Winking Ghost Avatar -->
         <div class="relative w-8 h-8 rounded-full flex items-center justify-center filter drop-shadow-[0_4px_10px_rgba(168,85,247,0.7)] transition transform hover:scale-110">
           <img 
             src="/ghost-online.png" 
@@ -110,6 +107,7 @@ const createGhostMarkerIcon = () => {
     `,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
+    popupAnchor: [0, -18],
   });
 };
 
@@ -136,16 +134,25 @@ export default function NightMap({
   const [vibeSubmitted, setVibeSubmitted] = useState<string | null>(null);
   const [realtimeGhosts, setRealtimeGhosts] = useState<GhostUser[]>([]);
 
+  // Immutable per-tab session ID so your own device never renders on your own screen
+  const tabGhostIdRef = useRef<string>(
+    `ghost_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`
+  );
+  const displayNameRef = useRef<string>('Night Owl');
+
+  useEffect(() => {
+    displayNameRef.current = user?.name ? user.name.split(' ')[0] : 'Night Owl';
+  }, [user?.name]);
+
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Supabase Realtime Ghost Presence Synchronization (Other Users Only)
+  // Supabase Realtime Ghost Presence + Instant Handshake (Other Users Only)
   useEffect(() => {
     if (!mounted) return;
 
-    const tabGhostId = `ghost_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
-    const displayName = user?.name ? user.name.split(' ')[0] : 'Night Owl';
+    const myTabId = tabGhostIdRef.current;
     let watchId: number | null = null;
     let heartbeatId: NodeJS.Timeout | null = null;
     const latestPosRef = { lat: 0, lng: 0, ready: false };
@@ -154,30 +161,39 @@ export default function NightMap({
     const rebuildGhosts = () => {
       const now = Date.now();
       const active: GhostUser[] = [];
+
       peerMap.forEach((peer, key) => {
-        if (key === tabGhostId) return;
-        // Remove peers that closed their tab (> 12s without ping/presence)
-        if (now - peer.seenAt > 12000) {
+        if (!key || key === myTabId) return;
+        // Remove peers inactive for > 15 seconds (e.g. tab closed without unload)
+        if (now - peer.seenAt > 15000) {
           peerMap.delete(key);
           return;
         }
-        active.push(peer);
+        active.push({
+          id: peer.id,
+          name: peer.name,
+          area: peer.area,
+          lat: peer.lat,
+          lng: peer.lng,
+          lastActive: peer.lastActive,
+        });
       });
+
       setRealtimeGhosts(active);
     };
 
-    const channel = supabase.channel('after10-presence-network-v2', {
+    const channel = supabase.channel('after10-live-ghosts-v4', {
       config: {
-        presence: { key: tabGhostId },
+        presence: { key: myTabId },
         broadcast: { self: false },
       },
     });
 
-    const publishPresence = () => {
+    const publishMyLocation = () => {
       if (!latestPosRef.ready) return;
       const payload = {
-        id: tabGhostId,
-        name: displayName,
+        id: myTabId,
+        name: displayNameRef.current,
         area: 'Coimbatore City',
         lat: latestPosRef.lat,
         lng: latestPosRef.lng,
@@ -192,11 +208,16 @@ export default function NightMap({
     };
 
     const syncFromPresence = () => {
-      const presenceState = channel.presenceState();
-      Object.entries(presenceState).forEach(([key, presences]: [string, any]) => {
-        if (key === tabGhostId) return;
+      const state = channel.presenceState();
+      Object.entries(state).forEach(([key, presences]: [string, any]) => {
+        if (key === myTabId) return;
         const latest = Array.isArray(presences) ? presences[presences.length - 1] : null;
-        if (latest && latest.id !== tabGhostId && typeof latest.lat === 'number') {
+        if (
+          latest &&
+          latest.id !== myTabId &&
+          typeof latest.lat === 'number' &&
+          typeof latest.lng === 'number'
+        ) {
           peerMap.set(key, {
             id: key,
             name: latest.name || 'Night Owl',
@@ -220,8 +241,14 @@ export default function NightMap({
           rebuildGhosts();
         }
       })
+      .on('broadcast', { event: 'ghost_discover' }, () => {
+        // Another user just opened the map—immediately reply with our location if locked
+        publishMyLocation();
+      })
       .on('broadcast', { event: 'ghost_ping' }, ({ payload }) => {
-        if (!payload || !payload.id || payload.id === tabGhostId) return;
+        if (!payload || !payload.id || payload.id === myTabId) return;
+        if (typeof payload.lat !== 'number' || typeof payload.lng !== 'number') return;
+
         peerMap.set(payload.id, {
           id: payload.id,
           name: payload.name || 'Night Owl',
@@ -240,28 +267,39 @@ export default function NightMap({
         }
       })
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED' && 'geolocation' in navigator) {
-          const onPosition = (pos: GeolocationPosition) => {
-            latestPosRef.lat = pos.coords.latitude;
-            latestPosRef.lng = pos.coords.longitude;
-            latestPosRef.ready = true;
-            publishPresence();
-          };
+        if (status === 'SUBSCRIBED') {
+          // 1. Ask all currently online peers to broadcast immediately (works even if this device has no GPS)
+          channel.send({
+            type: 'broadcast',
+            event: 'ghost_discover',
+            payload: { from: myTabId },
+          });
 
-          navigator.geolocation.getCurrentPosition(
-            onPosition,
-            (err) => console.warn('[Ghost Radar] GPS unavailable:', err.message),
-            { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
-          );
+          // 2. Start GPS tracking if supported so others can see this device
+          if ('geolocation' in navigator) {
+            const onPosition = (pos: GeolocationPosition) => {
+              latestPosRef.lat = pos.coords.latitude;
+              latestPosRef.lng = pos.coords.longitude;
+              latestPosRef.ready = true;
+              publishMyLocation();
+            };
 
-          watchId = navigator.geolocation.watchPosition(
-            onPosition,
-            () => {},
-            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-          );
+            navigator.geolocation.getCurrentPosition(onPosition, () => {}, {
+              enableHighAccuracy: false,
+              timeout: 5000,
+              maximumAge: 30000,
+            });
 
+            watchId = navigator.geolocation.watchPosition(
+              onPosition,
+              () => {},
+              { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+            );
+          }
+
+          // 3. Keep heartbeat & stale cleanup running every 4 seconds
           heartbeatId = setInterval(() => {
-            publishPresence();
+            publishMyLocation();
             rebuildGhosts();
           }, 4000);
         }
@@ -271,7 +309,7 @@ export default function NightMap({
       channel.send({
         type: 'broadcast',
         event: 'ghost_leave',
-        payload: { id: tabGhostId },
+        payload: { id: myTabId },
       });
       channel.untrack();
     };
@@ -282,9 +320,9 @@ export default function NightMap({
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (heartbeatId !== null) clearInterval(heartbeatId);
       handleTabClose();
-      channel.unsubscribe();
+      supabase.removeChannel(channel);
     };
-  }, [mounted, user?.id, user?.name]);
+  }, [mounted]);
 
   if (!mounted) {
     return (
@@ -332,9 +370,9 @@ export default function NightMap({
       />
 
       {/* 1. ACTIVE NIGHT GHOSTS (OTHER LIVE USERS ONLY) */}
-      {Array.from(new Map(realtimeGhosts.map((g) => [g.id, g])).values()).map((ghost, idx) => (
+      {realtimeGhosts.map((ghost) => (
         <Marker
-          key={`${ghost.id}-${idx}`}
+          key={ghost.id}
           position={[ghost.lat, ghost.lng]}
           icon={createGhostMarkerIcon()}
         >
