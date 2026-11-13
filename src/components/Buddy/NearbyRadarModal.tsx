@@ -89,6 +89,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
     if (!isOpen) return;
 
     const myId = deviceSessionId.current;
+    let isSubscribed = false;
     setStep('radar');
     setGpsError(null);
     setSelectedUser(null);
@@ -106,7 +107,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
 
     let watchId: number | null = null;
     let heartbeatInterval: NodeJS.Timeout | null = null;
-    const latestCoordsRef = { lat: 0, lng: 0, ready: false };
+    const latestCoordsRef = { lat: 0, lng: 0, ready: false, tracked: false };
     const peerCoordsMap = new Map<string, { name: string; lat: number; lng: number; updatedAt: number }>();
 
     const rebuildNearbyList = () => {
@@ -115,23 +116,23 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       const detected: NearbyUser[] = [];
 
       peerCoordsMap.forEach((peer, key) => {
-        // Strictly filter out self
         if (!key || key === myId) return;
 
-        // Remove stale peers inactive for > 15 seconds
-        if (now - peer.updatedAt > 15000) {
+        // 35-second buffer so brief mobile screen locks don't drop active peers
+        if (now - peer.updatedAt > 35000) {
           peerCoordsMap.delete(key);
           return;
         }
 
         const rawDist = getDistanceMeters(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng);
-        if (rawDist <= 150) {
+        // 200m indoor GPS drift tolerance clamped to 50m radar HUD
+        if (rawDist <= 200) {
           detected.push({
             id: key,
             name: peer.name,
             lat: peer.lat,
             lng: peer.lng,
-            distanceMeters: Math.min(50, rawDist),
+            distanceMeters: Math.max(1, Math.min(50, rawDist)),
             angleDeg: getBearingDeg(latestCoordsRef.lat, latestCoordsRef.lng, peer.lat, peer.lng),
             updatedAt: peer.updatedAt,
           });
@@ -141,16 +142,16 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       setNearbyUsers(detected);
     };
 
-    const channel = supabase.channel('cbe-nearby-50m-v3', {
+    const channel = supabase.channel('cbe-nearby-50m-v4', {
       config: {
         presence: { key: myId },
         broadcast: { self: false },
       },
     });
 
-    const broadcastLocation = async () => {
-      if (!latestCoordsRef.ready || !channelRef.current) return;
-      await channelRef.current.send({
+    const broadcastLocation = () => {
+      if (!isSubscribed || !latestCoordsRef.ready || !channelRef.current) return;
+      channelRef.current.send({
         type: 'broadcast',
         event: 'nearby_ping',
         payload: {
@@ -168,7 +169,7 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
         Object.entries(state).forEach(([key, presences]) => {
           if (key === myId) return;
           const latest: any = Array.isArray(presences) ? presences[presences.length - 1] : null;
-          if (latest && latest.id !== myId && typeof latest.lat === 'number') {
+          if (latest && latest.id !== myId && typeof latest.lat === 'number' && latest.lat !== 0) {
             peerCoordsMap.set(key, {
               name: latest.name || 'Night Owl',
               lat: latest.lat,
@@ -185,8 +186,13 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
           rebuildNearbyList();
         }
       })
+      .on('broadcast', { event: 'nearby_discover' }, () => {
+        broadcastLocation();
+      })
       .on('broadcast', { event: 'nearby_ping' }, ({ payload }) => {
         if (!payload || !payload.id || payload.id === myId) return;
+        if (typeof payload.lat !== 'number' || typeof payload.lng !== 'number' || payload.lat === 0) return;
+
         peerCoordsMap.set(payload.id, {
           name: payload.name || 'Night Owl',
           lat: payload.lat,
@@ -194,6 +200,12 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
           updatedAt: Date.now(),
         });
         rebuildNearbyList();
+      })
+      .on('broadcast', { event: 'nearby_leave' }, ({ payload }) => {
+        if (payload?.id) {
+          peerCoordsMap.delete(payload.id);
+          rebuildNearbyList();
+        }
       })
       .on('broadcast', { event: 'nearby_request' }, ({ payload }) => {
         if (payload?.toId === myId && payload?.fromId !== myId) {
@@ -234,6 +246,15 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
+          isSubscribed = true;
+
+          // Ask any already-open nearby devices to reply immediately
+          channel.send({
+            type: 'broadcast',
+            event: 'nearby_discover',
+            payload: { from: myId },
+          });
+
           const handlePos = async (pos: GeolocationPosition) => {
             const lat = pos.coords.latitude;
             const lng = pos.coords.longitude;
@@ -243,14 +264,17 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
             setMyCoords({ lat, lng });
             setGpsError(null);
 
-            await channel.track({
-              id: myId,
-              name: myUserName,
-              lat,
-              lng,
-              updatedAt: Date.now(),
-            });
-            await broadcastLocation();
+            if (!latestCoordsRef.tracked) {
+              latestCoordsRef.tracked = true;
+              await channel.track({
+                id: myId,
+                name: myUserName,
+                lat,
+                lng,
+              });
+            }
+
+            broadcastLocation();
             rebuildNearbyList();
           };
 
@@ -275,7 +299,15 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
           );
 
           heartbeatInterval = setInterval(() => {
-            broadcastLocation();
+            if (latestCoordsRef.ready) {
+              broadcastLocation();
+            } else {
+              channel.send({
+                type: 'broadcast',
+                event: 'nearby_discover',
+                payload: { from: myId },
+              });
+            }
             rebuildNearbyList();
           }, 3000);
         }
@@ -288,7 +320,14 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (ignoreTimerRef.current) clearTimeout(ignoreTimerRef.current);
       if (channelRef.current) {
-        channelRef.current.untrack();
+        if (isSubscribed) {
+          channelRef.current.send({
+            type: 'broadcast',
+            event: 'nearby_leave',
+            payload: { id: myId },
+          });
+          channelRef.current.untrack();
+        }
         supabase.removeChannel(channelRef.current);
       }
     };
@@ -577,7 +616,9 @@ export default function NearbyRadarModal({ isOpen, onClose, onBackToMenu, curren
                   {/* Nearby Users List */}
                   {nearbyUsers.length === 0 ? (
                     <div className="p-3.5 rounded-2xl border border-dashed border-zinc-800 text-center text-zinc-500 text-[11px]">
-                      No active night owls detected within 50m yet. Keep radar open—blips appear automatically when someone enters your radius.
+                      {myCoords
+                        ? 'No active night owls detected within 50m yet. Keep radar open—blips appear automatically when someone enters your radius.'
+                        : 'Waiting for your phone GPS to lock before plotting nearby owls...'}
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-40 overflow-y-auto pr-0.5">
