@@ -126,7 +126,6 @@ interface NightMapProps {
 export default function NightMap({ 
   spots = [], 
   alerts = [],
-  ghosts = [],
   selectedCategory = 'all', 
   onUpdateSpotVibe,
   onVouchAlert,
@@ -141,78 +140,88 @@ export default function NightMap({
     setMounted(true);
   }, []);
 
-  // Supabase Realtime Ghost Presence Synchronization
+  // Supabase Realtime Ghost Presence Synchronization (Other Users Only)
   useEffect(() => {
     if (!mounted) return;
 
-    // Stable session key per browser session
-    let localUserId = user?.id;
-    if (!localUserId) {
-      localUserId = typeof window !== 'undefined' 
-        ? localStorage.getItem('after10_ghost_key') || ''
-        : '';
-      if (!localUserId) {
-        localUserId = `ghost_${Math.random().toString(36).substring(2, 9)}`;
-        localStorage.setItem('after10_ghost_key', localUserId);
-      }
-    }
+    // Unique per-tab session ID so your own device never shows on your own map
+    const tabGhostId = `ghost_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     let watchId: number | null = null;
 
     const channel = supabase.channel('after10-presence-network', {
       config: {
-        presence: { key: localUserId },
+        presence: { key: tabGhostId },
       },
     });
 
+    const syncOtherGhosts = () => {
+      const presenceState = channel.presenceState();
+      const liveList: GhostUser[] = [];
+
+      Object.entries(presenceState).forEach(([key, presences]: [string, any]) => {
+        // Strictly exclude your own tab/device
+        if (key === tabGhostId) return;
+
+        const latest = Array.isArray(presences) ? presences[presences.length - 1] : null;
+        if (
+          latest &&
+          latest.id !== tabGhostId &&
+          typeof latest.lat === 'number' &&
+          typeof latest.lng === 'number'
+        ) {
+          liveList.push({
+            id: key,
+            name: latest.name || 'Night Owl',
+            area: latest.area || 'Coimbatore City',
+            lat: latest.lat,
+            lng: latest.lng,
+            lastActive: latest.lastActive || Date.now(),
+          } as GhostUser);
+        }
+      });
+
+      setRealtimeGhosts(liveList);
+    };
+
     channel
-      .on('presence', { event: 'sync' }, () => {
-        const presenceState = channel.presenceState();
-        const liveList: GhostUser[] = [];
-
-        Object.values(presenceState).forEach((presences: any) => {
-          presences.forEach((p: any) => {
-            if (p && p.id && p.lat && p.lng) {
-              liveList.push({
-                id: p.id,
-                name: p.name || 'Anonymous Ghost',
-                area: p.area || 'Coimbatore',
-                lat: p.lat,
-                lng: p.lng,
-                college: p.college,
-                status: 'online',
-                lastActive: p.lastActive || 'Just now',
-              } as GhostUser);
-            }
-          });
-        });
-
-        setRealtimeGhosts(liveList);
-      })
-      .subscribe(async (status) => {
+      .on('presence', { event: 'sync' }, syncOtherGhosts)
+      .on('presence', { event: 'join' }, syncOtherGhosts)
+      .on('presence', { event: 'leave' }, syncOtherGhosts)
+      .subscribe((status) => {
         if (status === 'SUBSCRIBED' && 'geolocation' in navigator) {
           watchId = navigator.geolocation.watchPosition(
             (pos) => {
               channel.track({
-                id: localUserId,
+                id: tabGhostId,
                 name: user?.name ? user.name.split(' ')[0] : 'Night Owl',
                 area: 'Coimbatore City',
                 lat: pos.coords.latitude,
                 lng: pos.coords.longitude,
-                lastActive: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                lastActive: Date.now(),
               });
             },
             () => {
               // Do not broadcast fake coordinates if GPS is off/denied
             },
-            { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
           );
         }
       });
 
+    // Immediately remove ghost when user closes or leaves the tab
+    const handleTabClose = () => {
+      channel.untrack();
+    };
+    window.addEventListener('beforeunload', handleTabClose);
+    window.addEventListener('pagehide', handleTabClose);
+
     return () => {
+      window.removeEventListener('beforeunload', handleTabClose);
+      window.removeEventListener('pagehide', handleTabClose);
       if (watchId !== null) {
         navigator.geolocation.clearWatch(watchId);
       }
+      channel.untrack();
       channel.unsubscribe();
     };
   }, [mounted, user]);
@@ -231,9 +240,6 @@ export default function NightMap({
   const filteredSpots = spots.filter(
     (spot) => selectedCategory === 'all' || spot.category === selectedCategory
   );
-
-  // Use live Supabase presence ghosts directly (avoiding duplicate fallback pins)
-  const combinedGhosts = realtimeGhosts.length > 0 ? realtimeGhosts : ghosts;
 
   const handleVote = (spotId: string, status: SpotVibeStatus, crowd: CrowdLevel) => {
     onUpdateSpotVibe(spotId, status, crowd);
@@ -255,23 +261,23 @@ export default function NightMap({
       />
 
       {/* Coimbatore Perimeter with Warm Golden Interior Glow */}
-        <Polygon
-          positions={CBE_BORDER_COORDINATES}
-          pathOptions={{
-            color: '#09090b',       // Deep solid dark border line
-            weight: 3.5,            // Outer boundary thickness
-            fillColor: '#f59e0b',   // Amber / golden glow
-            fillOpacity: 0.12,      // Gentle subtle transparency (adjust between 0.10 - 0.16 to taste)
-          }}
-        />
+      <Polygon
+        positions={CBE_BORDER_COORDINATES}
+        pathOptions={{
+          color: '#09090b',
+          weight: 3.5,
+          fillColor: '#f59e0b',
+          fillOpacity: 0.12,
+        }}
+      />
 
-      {/* 1. ACTIVE NIGHT GHOSTS (REAL-TIME SUPABASE PRESENCE RADAR) */}
-        {Array.from(new Map(combinedGhosts.map((g) => [g.id, g])).values()).map((ghost, idx) => (
-          <Marker
-            key={`${ghost.id}-${idx}`}
-            position={[ghost.lat, ghost.lng]}
-            icon={createGhostMarkerIcon()}
-          >
+      {/* 1. ACTIVE NIGHT GHOSTS (OTHER LIVE USERS ONLY) */}
+      {Array.from(new Map(realtimeGhosts.map((g) => [g.id, g])).values()).map((ghost, idx) => (
+        <Marker
+          key={`${ghost.id}-${idx}`}
+          position={[ghost.lat, ghost.lng]}
+          icon={createGhostMarkerIcon()}
+        >
           <Popup className="custom-popup">
             <div className="bg-zinc-950 text-zinc-100 p-3 rounded-2xl border border-purple-800/80 text-xs max-w-[210px] shadow-2xl space-y-1.5">
               <div className="flex items-center justify-between">
@@ -285,7 +291,6 @@ export default function NightMap({
                 <MapPin className="w-3 h-3 text-zinc-500" />
                 Near {ghost.area}
               </p>
-              
               <p className="text-[9px] text-zinc-500 font-mono pt-1 border-t border-zinc-800/80">
                 Roaming the night streets
               </p>
