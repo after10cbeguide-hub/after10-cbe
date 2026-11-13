@@ -148,15 +148,25 @@ export default function NightMap({
     setMounted(true);
   }, []);
 
-  // Supabase Realtime Ghost Presence + Instant Handshake (Other Users Only)
+  // Supabase Realtime Ghost Presence + Stable Keepalive (Other Users Only)
   useEffect(() => {
     if (!mounted) return;
 
     const myTabId = tabGhostIdRef.current;
     let watchId: number | null = null;
     let heartbeatId: NodeJS.Timeout | null = null;
-    const latestPosRef = { lat: 0, lng: 0, ready: false };
-    const peerMap = new Map<string, GhostUser & { seenAt: number }>();
+    let isSubscribed = false;
+
+    const latestPosRef = {
+      lat: 0,
+      lng: 0,
+      ready: false,
+      lastTrackedLat: 0,
+      lastTrackedLng: 0,
+      lastTrackedName: '',
+    };
+
+    const peerMap = new Map<string, GhostUser & { seenAt: number; viaPresence: boolean }>();
 
     const rebuildGhosts = () => {
       const now = Date.now();
@@ -164,11 +174,13 @@ export default function NightMap({
 
       peerMap.forEach((peer, key) => {
         if (!key || key === myTabId) return;
-        // Remove peers inactive for > 15 seconds (e.g. tab closed without unload)
-        if (now - peer.seenAt > 15000) {
+
+        // Only expire broadcast-only peers after 35s; Presence-tracked peers stay alive until 'leave'
+        if (!peer.viaPresence && now - peer.seenAt > 35000) {
           peerMap.delete(key);
           return;
         }
+
         active.push({
           id: peer.id,
           name: peer.name,
@@ -182,33 +194,57 @@ export default function NightMap({
       setRealtimeGhosts(active);
     };
 
-    const channel = supabase.channel('after10-live-ghosts-v4', {
+    const channel = supabase.channel('after10-live-ghosts-v5', {
       config: {
         presence: { key: myTabId },
         broadcast: { self: false },
       },
     });
 
-    const publishMyLocation = () => {
-      if (!latestPosRef.ready) return;
-      const payload = {
-        id: myTabId,
-        name: displayNameRef.current,
-        area: 'Coimbatore City',
-        lat: latestPosRef.lat,
-        lng: latestPosRef.lng,
-        lastActive: Date.now(),
-      };
-      channel.track(payload);
+    // Track in Presence ONLY on initial lock or significant movement (> ~15m) to avoid leave/join flicker
+    const trackInPresenceIfNeeded = async () => {
+      if (!isSubscribed || !latestPosRef.ready) return;
+
+      const movedEnough =
+        Math.abs(latestPosRef.lat - latestPosRef.lastTrackedLat) > 0.00015 ||
+        Math.abs(latestPosRef.lng - latestPosRef.lastTrackedLng) > 0.00015 ||
+        displayNameRef.current !== latestPosRef.lastTrackedName;
+
+      if (movedEnough) {
+        latestPosRef.lastTrackedLat = latestPosRef.lat;
+        latestPosRef.lastTrackedLng = latestPosRef.lng;
+        latestPosRef.lastTrackedName = displayNameRef.current;
+
+        await channel.track({
+          id: myTabId,
+          name: displayNameRef.current,
+          area: 'Coimbatore City',
+          lat: latestPosRef.lat,
+          lng: latestPosRef.lng,
+        });
+      }
+    };
+
+    // Broadcast lightweight ping without resetting Presence state
+    const broadcastPing = () => {
+      if (!isSubscribed || !latestPosRef.ready) return;
       channel.send({
         type: 'broadcast',
         event: 'ghost_ping',
-        payload,
+        payload: {
+          id: myTabId,
+          name: displayNameRef.current,
+          area: 'Coimbatore City',
+          lat: latestPosRef.lat,
+          lng: latestPosRef.lng,
+        },
       });
     };
 
     const syncFromPresence = () => {
       const state = channel.presenceState();
+      const presentKeys = new Set<string>();
+
       Object.entries(state).forEach(([key, presences]: [string, any]) => {
         if (key === myTabId) return;
         const latest = Array.isArray(presences) ? presences[presences.length - 1] : null;
@@ -216,19 +252,30 @@ export default function NightMap({
           latest &&
           latest.id !== myTabId &&
           typeof latest.lat === 'number' &&
-          typeof latest.lng === 'number'
+          typeof latest.lng === 'number' &&
+          latest.lat !== 0
         ) {
+          presentKeys.add(key);
           peerMap.set(key, {
             id: key,
             name: latest.name || 'Night Owl',
             area: latest.area || 'Coimbatore City',
             lat: latest.lat,
             lng: latest.lng,
-            lastActive: latest.lastActive || Date.now(),
+            lastActive: Date.now(),
             seenAt: Date.now(),
+            viaPresence: true,
           });
         }
       });
+
+      // Mark peers no longer in Presence state as non-presence so they clean up cleanly
+      peerMap.forEach((peer, key) => {
+        if (peer.viaPresence && !presentKeys.has(key)) {
+          peerMap.delete(key);
+        }
+      });
+
       rebuildGhosts();
     };
 
@@ -242,13 +289,13 @@ export default function NightMap({
         }
       })
       .on('broadcast', { event: 'ghost_discover' }, () => {
-        // Another user just opened the map—immediately reply with our location if locked
-        publishMyLocation();
+        broadcastPing();
       })
       .on('broadcast', { event: 'ghost_ping' }, ({ payload }) => {
         if (!payload || !payload.id || payload.id === myTabId) return;
-        if (typeof payload.lat !== 'number' || typeof payload.lng !== 'number') return;
+        if (typeof payload.lat !== 'number' || typeof payload.lng !== 'number' || payload.lat === 0) return;
 
+        const existing = peerMap.get(payload.id);
         peerMap.set(payload.id, {
           id: payload.id,
           name: payload.name || 'Night Owl',
@@ -257,6 +304,7 @@ export default function NightMap({
           lng: payload.lng,
           lastActive: Date.now(),
           seenAt: Date.now(),
+          viaPresence: existing?.viaPresence ?? false,
         });
         rebuildGhosts();
       })
@@ -268,20 +316,22 @@ export default function NightMap({
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          // 1. Ask all currently online peers to broadcast immediately (works even if this device has no GPS)
+          isSubscribed = true;
+
+          // Ask online peers to announce immediately (even if this laptop has no GPS)
           channel.send({
             type: 'broadcast',
             event: 'ghost_discover',
             payload: { from: myTabId },
           });
 
-          // 2. Start GPS tracking if supported so others can see this device
           if ('geolocation' in navigator) {
             const onPosition = (pos: GeolocationPosition) => {
               latestPosRef.lat = pos.coords.latitude;
               latestPosRef.lng = pos.coords.longitude;
               latestPosRef.ready = true;
-              publishMyLocation();
+              trackInPresenceIfNeeded();
+              broadcastPing();
             };
 
             navigator.geolocation.getCurrentPosition(onPosition, () => {}, {
@@ -297,21 +347,33 @@ export default function NightMap({
             );
           }
 
-          // 3. Keep heartbeat & stale cleanup running every 4 seconds
+          // Gentle 6-second keepalive + discovery retry (does NOT re-trigger Presence leave/join)
           heartbeatId = setInterval(() => {
-            publishMyLocation();
+            if (latestPosRef.ready) {
+              trackInPresenceIfNeeded();
+              broadcastPing();
+            } else {
+              // Laptop/desktop without GPS continues listening & discovering mobile ghosts
+              channel.send({
+                type: 'broadcast',
+                event: 'ghost_discover',
+                payload: { from: myTabId },
+              });
+            }
             rebuildGhosts();
-          }, 4000);
+          }, 6000);
         }
       });
 
     const handleTabClose = () => {
-      channel.send({
-        type: 'broadcast',
-        event: 'ghost_leave',
-        payload: { id: myTabId },
-      });
-      channel.untrack();
+      if (isSubscribed) {
+        channel.send({
+          type: 'broadcast',
+          event: 'ghost_leave',
+          payload: { id: myTabId },
+        });
+        channel.untrack();
+      }
     };
     window.addEventListener('beforeunload', handleTabClose);
 
